@@ -15,11 +15,11 @@ jobs:
   include:
   - stage: test
     if: type = pull_request
-    script: rake test
+    script: "./.travis/test.sh"
     os: osx
   - stage: test
     if: type = pull_request
-    script: rake test
+    script: "./.travis/test.sh"
     os: linux
     dist: xenial
   - stage: deploy

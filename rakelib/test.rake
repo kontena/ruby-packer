@@ -1,3 +1,5 @@
+require 'minitest'
+
 namespace "test" do
   Rake::TestTask.new "roundtrip" do |task|
     task.pattern = "test/roundtrip/test_*.rb"
@@ -12,7 +14,7 @@ namespace "test" do
   task "unit" do
     $LOAD_PATH.unshift 'lib'
 
-    Rake::FileList["test/unit/test_*.rb"].each do |test|
+    Rake::FileList[File.expand_path(File.join('..', "test/unit/test_*.rb"))].each do |test|
       require_relative test
     end
 
