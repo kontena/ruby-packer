@@ -9,6 +9,8 @@ before_install: "./.travis/install_deps.sh"
 stages:
 - name: test
 - name: deploy
+  env:
+    secure: "t6JiPrcdCDdR5+R7BmWcPYQBa4WVXCOybvjN8iR6NSF6Uwk0PZrRZj8QSNnIB0mjd5OWiKRWWpC7DgQsLSwCj5wki8hDWwePt5/Z1ivsfAjU0E6j8qMJeS4GPS6aHlOLncOPceLtxVfyT1lUuEvq+6NpQkR0vAaFf7yaKTn6SuDYDAAtaDslZB3kwPTAGkLLlG6OcboDN3bSo/iMV0zz02N76yO9ErAfd1w5O4NbfiFOjOOxBMgrf39xeIaRq6yTsPIMtV4LsDJqryys9VjNDmneobZm8FchnZL0ZOw1Xmv+kyd5s1RD6E+kj0rm78nPdEppPfXt9Q4Hn5DKOHVVD+8X9kLkWk3DCBxNeHKN83uRoIwFfFpb1nddxcSAtyOEzvpwDcdldE/gmWq+uriJ6LjQCwYjmyXxvFYSGktooBKwkAwhVzwRP2F+k7Pcz0FeLAFN9CGyOvzcEBjrhCZ8PcsXNT2zzFPOClGAjseaXZhhJV/ph1KWDZfEI5UiEcjYlQcQ8YzmLfc8rMbELt93rXxINjTqMamHFO1s8Vyh1A1zcvZOQVdCfGnnOUXuoQPXqNHrJpm5dW+2dSq8/bHWvi49K8fZIrfEWZGvYsWw9TsuAHFZKaUOlZKgqOeGRiXddOPCTXAuT+x+jyjBKJBzbo6LdjjtDSj6rP5lxzXdoUA="
   if: tag IS present
 jobs:
   include:
@@ -22,12 +24,11 @@ jobs:
     os: linux
     dist: xenial
   - stage: deploy
+    name: deploy osx
     os: osx
     script: "./.travis/deploy.sh"
   - stage: deploy
+    name: deploy linux
     os: linux
     dist: xenial
     script: "./.travis/deploy.sh"
-env:
-  deploy:
-    secure: "t6JiPrcdCDdR5+R7BmWcPYQBa4WVXCOybvjN8iR6NSF6Uwk0PZrRZj8QSNnIB0mjd5OWiKRWWpC7DgQsLSwCj5wki8hDWwePt5/Z1ivsfAjU0E6j8qMJeS4GPS6aHlOLncOPceLtxVfyT1lUuEvq+6NpQkR0vAaFf7yaKTn6SuDYDAAtaDslZB3kwPTAGkLLlG6OcboDN3bSo/iMV0zz02N76yO9ErAfd1w5O4NbfiFOjOOxBMgrf39xeIaRq6yTsPIMtV4LsDJqryys9VjNDmneobZm8FchnZL0ZOw1Xmv+kyd5s1RD6E+kj0rm78nPdEppPfXt9Q4Hn5DKOHVVD+8X9kLkWk3DCBxNeHKN83uRoIwFfFpb1nddxcSAtyOEzvpwDcdldE/gmWq+uriJ6LjQCwYjmyXxvFYSGktooBKwkAwhVzwRP2F+k7Pcz0FeLAFN9CGyOvzcEBjrhCZ8PcsXNT2zzFPOClGAjseaXZhhJV/ph1KWDZfEI5UiEcjYlQcQ8YzmLfc8rMbELt93rXxINjTqMamHFO1s8Vyh1A1zcvZOQVdCfGnnOUXuoQPXqNHrJpm5dW+2dSq8/bHWvi49K8fZIrfEWZGvYsWw9TsuAHFZKaUOlZKgqOeGRiXddOPCTXAuT+x+jyjBKJBzbo6LdjjtDSj6rP5lxzXdoUA="
