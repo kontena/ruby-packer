@@ -1,7 +1,9 @@
 language: ruby
 cache: bundler
 sudo: enabled
-before_install: "./.travis/install_deps.sh"
+before_install:
+  - "./.travis/install_deps.sh"
+  - gem install bundler
 stages:
 - name: test
 - name: deploy
