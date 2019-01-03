@@ -13,20 +13,24 @@ stages:
 jobs:
   include:
   - stage: test
+    rvm: 2.5.1
     name: test osx
     script: "./.travis/test.sh"
     os: osx
   - stage: test
     name: test linux
+    rvm: 2.5.1
     script: "./.travis/test.sh"
     os: linux
     dist: xenial
   - stage: deploy
     name: deploy osx
+    rvm: 2.5.1
     os: osx
     script: "./.travis/deploy.sh"
   - stage: deploy
     name: deploy linux
+    rvm: 2.5.1
     os: linux
     dist: xenial
     script: "./.travis/deploy.sh"
