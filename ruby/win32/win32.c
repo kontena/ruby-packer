@@ -56,6 +56,11 @@
 #include "id.h"
 #include "internal.h"
 #include "encindex.h"
+
+// --------- [Enclose.io Hack start] ---------
+#include "enclose_io.h"
+// --------- [Enclose.io Hack end] ---------
+
 #define isdirsep(x) ((x) == '/' || (x) == '\\')
 
 #if defined _MSC_VER && _MSC_VER <= 1200
@@ -849,6 +854,11 @@ static int w32_cmdvector(const WCHAR *, char ***, UINT, rb_encoding *);
 void
 rb_w32_sysinit(int *argc, char ***argv)
 {
+    int new_argc;
+    char **new_argv;
+    UINT cp;
+    size_t i;
+
 #if RUBY_MSVCRT_VERSION >= 80
     static void set_pioinfo_extra(void);
 
@@ -865,6 +875,28 @@ rb_w32_sysinit(int *argc, char ***argv)
     // subvert cmd.exe's feeble attempt at command line parsing
     //
     *argc = w32_cmdvector(GetCommandLineW(), argv, CP_UTF8, &OnigEncodingUTF_8);
+
+    // --------- [Enclose.io Hack start] ---------
+    #ifdef ENCLOSE_IO_ENTRANCE
+    new_argc = *argc;
+    new_argv = *argv;
+    cp = CP_UTF8;
+    if (NULL == getenv("ENCLOSE_IO_USE_ORIGINAL_RUBY")) {
+        new_argv = (char **)malloc( (*argc + 1) * sizeof(char *));
+        assert(new_argv);
+        new_argv[0] = (*argv)[0];
+        new_argv[1] = ENCLOSE_IO_ENTRANCE;
+        for (i = 1; i < *argc; ++i) {
+               new_argv[2 + i - 1] = (*argv)[i];
+        }
+        new_argc = *argc + 1;
+
+        *argc = new_argc;
+        *argv = new_argv;
+    }
+    #endif
+    // --------- [Enclose.io Hack end] ---------
+
 
     //
     // Now set up the correct time stuff
@@ -1867,6 +1899,9 @@ w32_cmdvector(const WCHAR *cmd, char ***vec, UINT cp, rb_encoding *enc)
 	curr = (NtCmdLineElement *)calloc(sizeof(NtCmdLineElement), 1);
 	if (!curr) goto do_nothing;
 	curr->str = rb_w32_wstr_to_mbstr(cp, base, len, &curr->len);
+	if (curr->str && (curr->str = realloc(curr->str, curr->len + 1))) {
+	    curr->str[curr->len] = '\0';
+	}
 	curr->flags |= NTMALLOC;
 
 	if (globbing && (tail = cmdglob(curr, cmdtail, cp, enc))) {
@@ -7038,6 +7073,11 @@ rb_w32_read(int fd, void *buf, size_t size)
     // validate fd by using _get_osfhandle() because we cannot access _nhandle
     if (_get_osfhandle(fd) == -1) {
 	return -1;
+    }
+
+    if (SQUASH_VALID_VFD(fd)) {
+	// TODO how about Binary Mode File I/O?
+	return _read(fd, buf, size);
     }
 
     if (_osfile(fd) & FTEXT) {

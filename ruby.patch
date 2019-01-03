@@ -1,5 +1,5 @@
-diff -ruN ruby-2.5.1/Makefile.in ruby/Makefile.in
---- ruby-2.5.1/Makefile.in	2018-05-04 10:55:18.000000000 -0700
+diff -ruN ruby-2.6.0/Makefile.in ruby/Makefile.in
+--- ruby-2.6.0/Makefile.in	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/Makefile.in	2018-05-01 18:37:56.000000000 -0700
 @@ -227,13 +227,13 @@
  miniruby$(EXEEXT):
@@ -8,26 +8,26 @@ diff -ruN ruby-2.5.1/Makefile.in ruby/Makefile.in
 -		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(NORMALMAINOBJ) $(MINIOBJS) $(COMMONOBJS) $(MAINLIBS) $(LIBS) $(OUTFLAG)$@
 +		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(NORMALMAINOBJ) $(MINIOBJS) $(COMMONOBJS) $(MAINLIBS) $(LIBS) $(RUBYC_FLAGS) $(OUTFLAG)$@ $(LDFLAGS)
  		$(Q) $(POSTLINK)
- 
+
  $(PROGRAM):
  		@$(RM) $@
  		$(ECHO) linking $@
 -		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(EXTOBJS) $(LIBRUBYARG) $(MAINLIBS) $(LIBS) $(EXTLIBS) $(OUTFLAG)$@
 +		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(EXTOBJS) $(LIBRUBYARG) $(MAINLIBS) $(LIBS) $(EXTLIBS) $(RUBYC_FLAGS) $(OUTFLAG)$@ $(LDFLAGS)
  		$(Q) $(POSTLINK)
- 
+
  # We must `rm' the library each time this rule is invoked because "updating" a
 @@ -247,7 +247,7 @@
- 
+
  verify-static-library: $(LIBRUBY_A)
  		$(ECHO) verifying static-library $@
 -		@$(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(LIBRUBY_A) $(MAINLIBS) $(EXTLIBS) $(LIBS) $(OUTFLAG)conftest$(EXEEXT)
 +		@$(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(LIBRUBY_A) $(MAINLIBS) $(EXTLIBS) $(LIBS) $(RUBYC_FLAGS) $(OUTFLAG)conftest$(EXEEXT) $(LDFLAGS)
  		@$(RMALL) conftest$(EXEEXT) conftest.c conftest.dSYM
- 
+
  $(LIBRUBY_SO):
-diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
---- ruby-2.5.1/autoupdate_autoupdate.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
+--- ruby-2.6.0/autoupdate_autoupdate.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/autoupdate_autoupdate.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,1105 @@
 +/*
@@ -627,7 +627,7 @@ diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
 +		FALSE,	    // Set handle inheritance to FALSE
 +		0,		// No creation flags
 +		NULL,	     // Use parent's environment block
-+		NULL,	     // Use parent's starting directory 
++		NULL,	     // Use parent's starting directory
 +		&si,	      // Pointer to STARTUPINFO structure
 +		&pi	       // Pointer to PROCESS_INFORMATION structure
 +	);
@@ -641,7 +641,7 @@ diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
 +	}
 +	// Wait until child process exits.
 +	WaitForSingleObject(pi.hProcess, INFINITE);
-+	// Close process and thread handles. 
++	// Close process and thread handles.
 +	CloseHandle(pi.hProcess);
 +	CloseHandle(pi.hThread);
 +	fprintf(stderr, "Deleting %S\n", selftmpf);
@@ -983,7 +983,7 @@ diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
 +	strm.total_out = 0;
 +	strm.zalloc = Z_NULL;
 +	strm.zfree = Z_NULL;
-+	
++
 +	short done = 0;
 +
 +	if (inflateInit2(&strm, (16+MAX_WBITS)) != Z_OK) {
@@ -992,7 +992,7 @@ diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
 +		fprintf(stderr, "Auto-update Failed: inflateInit2 failed\n");
 +		return 2;
 +	}
-+	
++
 +	while (!done) {
 +		// If our output buffer is too small
 +		if (strm.total_out >= uncompLength ) {
@@ -1009,10 +1009,10 @@ diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
 +			free( uncomp );
 +			uncomp = uncomp2 ;
 +		}
-+		
++
 +		strm.next_out = (Bytef *) (uncomp + strm.total_out);
 +		strm.avail_out = uncompLength - strm.total_out;
-+		
++
 +		// Inflate another chunk.
 +		int err = inflate(&strm, Z_SYNC_FLUSH);
 +		if (err == Z_STREAM_END) {
@@ -1135,8 +1135,8 @@ diff -ruN ruby-2.5.1/autoupdate_autoupdate.c ruby/autoupdate_autoupdate.c
 +}
 +
 +#endif // _WIN32
-diff -ruN ruby-2.5.1/autoupdate_exepath.c ruby/autoupdate_exepath.c
---- ruby-2.5.1/autoupdate_exepath.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/autoupdate_exepath.c ruby/autoupdate_exepath.c
+--- ruby-2.6.0/autoupdate_exepath.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/autoupdate_exepath.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,164 @@
 +/*
@@ -1156,10 +1156,10 @@ diff -ruN ruby-2.5.1/autoupdate_exepath.c ruby/autoupdate_exepath.c
 + * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
 + * sell copies of the Software, and to permit persons to whom the Software is
 + * furnished to do so, subject to the following conditions:
-+ * 
++ *
 + * The above copyright notice and this permission notice shall be included in
 + * all copies or substantial portions of the Software.
-+ * 
++ *
 + * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 + * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 + * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -1303,8 +1303,8 @@ diff -ruN ruby-2.5.1/autoupdate_exepath.c ruby/autoupdate_exepath.c
 +  return 0;
 +}
 +#endif
-diff -ruN ruby-2.5.1/autoupdate_inflate.c ruby/autoupdate_inflate.c
---- ruby-2.5.1/autoupdate_inflate.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/autoupdate_inflate.c ruby/autoupdate_inflate.c
+--- ruby-2.6.0/autoupdate_inflate.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/autoupdate_inflate.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,9 @@
 +/*
@@ -1316,8 +1316,8 @@ diff -ruN ruby-2.5.1/autoupdate_inflate.c ruby/autoupdate_inflate.c
 +
 +#include "autoupdate.h"
 +#include "autoupdate_internal.h"
-diff -ruN ruby-2.5.1/autoupdate_tmpf.c ruby/autoupdate_tmpf.c
---- ruby-2.5.1/autoupdate_tmpf.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/autoupdate_tmpf.c ruby/autoupdate_tmpf.c
+--- ruby-2.6.0/autoupdate_tmpf.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/autoupdate_tmpf.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,157 @@
 +/*
@@ -1477,8 +1477,8 @@ diff -ruN ruby-2.5.1/autoupdate_tmpf.c ruby/autoupdate_tmpf.c
 +}
 +
 +#endif // _WIN32
-diff -ruN ruby-2.5.1/autoupdate_utils.c ruby/autoupdate_utils.c
---- ruby-2.5.1/autoupdate_utils.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/autoupdate_utils.c ruby/autoupdate_utils.c
+--- ruby-2.6.0/autoupdate_utils.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/autoupdate_utils.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,277 @@
 +/*
@@ -1569,7 +1569,7 @@ diff -ruN ruby-2.5.1/autoupdate_utils.c ruby/autoupdate_utils.c
 +	FILE *f = NULL;
 +	int ret;
 +	size_t size_t_ret;
-+	
++
 +	if (autoupdate_exepath(exec_path, &exec_path_len) != 0) {
 +#ifdef _WIN32
 +		goto exit;
@@ -1638,7 +1638,7 @@ diff -ruN ruby-2.5.1/autoupdate_utils.c ruby/autoupdate_utils.c
 +	if (0 != ret) {
 +		goto exit;
 +	}
-+	
++
 +	string = malloc(fsize + 1);
 +	if (NULL == string) {
 +		goto exit;
@@ -1758,13 +1758,13 @@ diff -ruN ruby-2.5.1/autoupdate_utils.c ruby/autoupdate_utils.c
 +#endif
 +	return 1;
 +}
-diff -ruN ruby-2.5.1/common.mk ruby/common.mk
---- ruby-2.5.1/common.mk	2018-05-04 10:55:15.000000000 -0700
+diff -ruN ruby-2.6.0/common.mk ruby/common.mk
+--- ruby-2.6.0/common.mk	2018-05-04 10:55:15.000000000 -0700
 +++ ruby/common.mk	2018-05-01 18:33:38.000000000 -0700
 @@ -70,7 +70,35 @@
  MAKE_ENC      = -f $(ENC_MK) V="$(V)" UNICODE_HDR_DIR="$(UNICODE_HDR_DIR)" \
  		RUBY="$(MINIRUBY)" MINIRUBY="$(MINIRUBY)" $(mflags)
- 
+
 -COMMONOBJS    = array.$(OBJEXT) \
 +COMMONOBJS    = autoupdate_autoupdate.$(OBJEXT) \
 +		autoupdate_exepath.$(OBJEXT) \
@@ -1798,13 +1798,13 @@ diff -ruN ruby-2.5.1/common.mk ruby/common.mk
  		bignum.$(OBJEXT) \
  		class.$(OBJEXT) \
  		compar.$(OBJEXT) \
-diff -ruN ruby-2.5.1/dir.c ruby/dir.c
---- ruby-2.5.1/dir.c	2018-05-04 10:55:17.000000000 -0700
+diff -ruN ruby-2.6.0/dir.c ruby/dir.c
+--- ruby-2.6.0/dir.c	2018-05-04 10:55:17.000000000 -0700
 +++ ruby/dir.c	2018-05-04 10:51:43.000000000 -0700
 @@ -121,6 +121,10 @@
  # define NORMALIZE_UTF8PATH 0
  #endif
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +#include "enclose_io.h"
 +// --------- [Enclose.io Hack end] ---------
@@ -1840,7 +1840,7 @@ diff -ruN ruby-2.5.1/dir.c ruby/dir.c
 @@ -1740,6 +1751,8 @@
      const int idx = VOL_CAPABILITIES_FORMAT;
      const uint32_t mask = VOL_CAP_FMT_CASE_SENSITIVE;
- 
+
 +    if (squash_find_entry(dirp)) { return 1; }
 +
  #   if defined HAVE_FGETATTRLIST
@@ -1857,20 +1857,20 @@ diff -ruN ruby-2.5.1/dir.c ruby/dir.c
  						flags, &new_pathtype);
 @@ -3148,7 +3161,7 @@
      path = RSTRING_PTR(dirname);
- 
+
  #if defined HAVE_GETATTRLIST && defined ATTR_DIR_ENTRYCOUNT
 -    {
 +    if (!enclose_io_is_path(path)) {
  	u_int32_t attrbuf[SIZEUP32(fsobj_tag_t)];
  	struct attrlist al = {ATTR_BIT_MAP_COUNT, 0, ATTR_CMN_OBJTAG,};
  	if (getattrlist(path, &al, attrbuf, sizeof(attrbuf), 0) != 0)
-diff -ruN ruby-2.5.1/dln.c ruby/dln.c
---- ruby-2.5.1/dln.c	2018-05-04 10:55:17.000000000 -0700
+diff -ruN ruby-2.6.0/dln.c ruby/dln.c
+--- ruby-2.6.0/dln.c	2018-05-04 10:55:17.000000000 -0700
 +++ ruby/dln.c	2018-05-01 18:33:38.000000000 -0700
 @@ -115,6 +115,10 @@
  #define isdirsep(x) ((x) == '/')
  #endif
- 
+
 +// ======= [Enclose.io Hack start] =========
 +#include "enclose_io.h"
 +// ======= [Enclose.io Hack end] =========
@@ -1878,8 +1878,8 @@ diff -ruN ruby-2.5.1/dln.c ruby/dln.c
  static size_t
  init_funcname_len(const char **file)
  {
-diff -ruN ruby-2.5.1/enclose_io_memfs.c ruby/enclose_io_memfs.c
---- ruby-2.5.1/enclose_io_memfs.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/enclose_io_memfs.c ruby/enclose_io_memfs.c
+--- ruby-2.6.0/enclose_io_memfs.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/enclose_io_memfs.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,55 @@
 +/*
@@ -1937,8 +1937,8 @@ diff -ruN ruby-2.5.1/enclose_io_memfs.c ruby/enclose_io_memfs.c
 +,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 +};
 +
-diff -ruN ruby-2.5.1/enclose_io_unix.c ruby/enclose_io_unix.c
---- ruby-2.5.1/enclose_io_unix.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/enclose_io_unix.c ruby/enclose_io_unix.c
+--- ruby-2.6.0/enclose_io_unix.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/enclose_io_unix.c	2018-05-04 10:54:05.000000000 -0700
 @@ -0,0 +1,1124 @@
 +/*
@@ -1977,7 +1977,7 @@ diff -ruN ruby-2.5.1/enclose_io_unix.c ruby/enclose_io_unix.c
 +	wcscpy(pFrom, sPath);
 +	pFrom[len] = 0;
 +	pFrom[len + 1] = 0;
-+	
++
 +	fileop.hwnd = NULL;
 +	fileop.wFunc = FO_DELETE;
 +	fileop.pFrom = pFrom;
@@ -3065,8 +3065,8 @@ diff -ruN ruby-2.5.1/enclose_io_unix.c ruby/enclose_io_unix.c
 +	return 1;
 +}
 +#endif
-diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
---- ruby-2.5.1/enclose_io_win32.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/enclose_io_win32.c ruby/enclose_io_win32.c
+--- ruby-2.6.0/enclose_io_win32.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/enclose_io_win32.c	2018-05-01 18:33:38.000000000 -0700
 @@ -0,0 +1,1276 @@
 +/*
@@ -3427,7 +3427,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +		size_t enclose_io_converted_length;
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpFileName);
-+		
++
 +		if (OPEN_EXISTING == dwCreationDisposition) {
 +			ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +				enclose_io_converted,
@@ -3615,7 +3615,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpFileName);
 +		ENCLOSE_IO_GEN_EXPANDED_NAME(enclose_io_converted);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_expanded,
 +			EncloseIOGetFileAttributesWHelper(enclose_io_expanded),
@@ -3630,7 +3630,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +		size_t enclose_io_converted_length;
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpFileName);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_converted,
 +			EncloseIOGetFileAttributesWHelper(enclose_io_converted),
@@ -3703,7 +3703,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +		W_ENCLOSE_IO_PATH_CONVERT(lpFileName);
 +		ENCLOSE_IO_GEN_EXPANDED_NAME(enclose_io_converted);
 +		assert(GetFileExInfoStandard == fInfoLevelId);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_expanded,
 +			EncloseIOGetFileAttributesExWHelper(enclose_io_expanded, lpFileInformation),
@@ -3876,7 +3876,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpFileName);
 +		ENCLOSE_IO_GEN_EXPANDED_NAME(enclose_io_converted);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_expanded,
 +			EncloseIOFindFirstFileHelper(enclose_io_expanded, lpFindFileData),
@@ -3892,7 +3892,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +		size_t enclose_io_converted_length;
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpFileName);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_converted,
 +			EncloseIOFindFirstFileHelper(enclose_io_converted, lpFindFileData),
@@ -4038,7 +4038,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +			ENCLOSE_IO_SET_LAST_ERROR;
 +			return FALSE;
 +		}
-+                
++
 +		retlen = mbstowcs(the_wpath, the_path, SQUASHFS_PATH_LEN);
 +		if ((size_t)-1 == retlen) {
 +			errno = ENAMETOOLONG;
@@ -4146,7 +4146,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpLibFileName);
 +		ENCLOSE_IO_GEN_EXPANDED_NAME(enclose_io_converted);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_expanded,
 +			LoadLibraryExW(
@@ -4168,7 +4168,7 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +		size_t enclose_io_converted_length;
 +
 +		W_ENCLOSE_IO_PATH_CONVERT(lpLibFileName);
-+		
++
 +		ENCLOSE_IO_CONSIDER_MKDIR_WORKDIR_RETURN(
 +			enclose_io_converted,
 +			LoadLibraryExW(
@@ -4345,8 +4345,8 @@ diff -ruN ruby-2.5.1/enclose_io_win32.c ruby/enclose_io_win32.c
 +
 +#endif // !RUBY_EXPORT
 +#endif
-diff -ruN ruby-2.5.1/ext/dbm/extconf.rb ruby/ext/dbm/extconf.rb
---- ruby-2.5.1/ext/dbm/extconf.rb	2018-05-04 10:55:16.000000000 -0700
+diff -ruN ruby-2.6.0/ext/dbm/extconf.rb ruby/ext/dbm/extconf.rb
+--- ruby-2.6.0/ext/dbm/extconf.rb	2018-05-04 10:55:16.000000000 -0700
 +++ ruby/ext/dbm/extconf.rb	2018-05-01 18:33:38.000000000 -0700
 @@ -25,6 +25,9 @@
  else
@@ -4355,11 +4355,11 @@ diff -ruN ruby-2.5.1/ext/dbm/extconf.rb ruby/ext/dbm/extconf.rb
 +# --------- [Enclose.io Hack start] ---------
 +dblib = %w(gdbm_compat)
 +# --------- [Enclose.io Hack end] ---------
- 
+
  headers = {
    "libc" => ["ndbm.h"], # 4.3BSD original ndbm, Berkeley DB 1 in 4.4BSD libc.
-diff -ruN ruby-2.5.1/ext/openssl/ossl_x509store.c ruby/ext/openssl/ossl_x509store.c
---- ruby-2.5.1/ext/openssl/ossl_x509store.c	2018-05-04 10:55:16.000000000 -0700
+diff -ruN ruby-2.6.0/ext/openssl/ossl_x509store.c ruby/ext/openssl/ossl_x509store.c
+--- ruby-2.6.0/ext/openssl/ossl_x509store.c	2018-05-04 10:55:16.000000000 -0700
 +++ ruby/ext/openssl/ossl_x509store.c	2018-05-01 18:43:29.000000000 -0700
 @@ -332,6 +332,10 @@
   *
@@ -4384,8 +4384,8 @@ diff -ruN ruby-2.5.1/ext/openssl/ossl_x509store.c ruby/ext/openssl/ossl_x509stor
      if(X509_LOOKUP_add_dir(lookup, path, X509_FILETYPE_PEM) != 1){
          ossl_raise(eX509StoreError, NULL);
      }
-diff -ruN ruby-2.5.1/ext/psych/.gitignore ruby/ext/psych/.gitignore
---- ruby-2.5.1/ext/psych/.gitignore	2018-05-04 10:55:16.000000000 -0700
+diff -ruN ruby-2.6.0/ext/psych/.gitignore ruby/ext/psych/.gitignore
+--- ruby-2.6.0/ext/psych/.gitignore	2018-05-04 10:55:16.000000000 -0700
 +++ ruby/ext/psych/.gitignore	1969-12-31 16:00:00.000000000 -0800
 @@ -1,11 +0,0 @@
 -/api.c
@@ -4399,13 +4399,13 @@ diff -ruN ruby-2.5.1/ext/psych/.gitignore ruby/ext/psych/.gitignore
 -/writer.c
 -/yaml.h
 -/yaml_private.h
-diff -ruN ruby-2.5.1/file.c ruby/file.c
---- ruby-2.5.1/file.c	2018-05-04 10:55:18.000000000 -0700
+diff -ruN ruby-2.6.0/file.c ruby/file.c
+--- ruby-2.6.0/file.c	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/file.c	2018-05-01 18:33:38.000000000 -0700
 @@ -88,6 +88,10 @@
  #define lstat stat
  #endif
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +#include "enclose_io.h"
 +// --------- [Enclose.io Hack end] ---------
@@ -4413,8 +4413,8 @@ diff -ruN ruby-2.5.1/file.c ruby/file.c
  /* define system APIs */
  #ifdef _WIN32
  #include "win32/file.h"
-diff -ruN ruby-2.5.1/include/autoupdate.h ruby/include/autoupdate.h
---- ruby-2.5.1/include/autoupdate.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/autoupdate.h ruby/include/autoupdate.h
+--- ruby-2.6.0/include/autoupdate.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/autoupdate.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,39 @@
 +/*
@@ -4456,8 +4456,8 @@ diff -ruN ruby-2.5.1/include/autoupdate.h ruby/include/autoupdate.h
 +#endif // _WIN32
 +
 +#endif /* end of include guard: AUTOUPDATE_H_8C141CA2 */
-diff -ruN ruby-2.5.1/include/autoupdate_internal.h ruby/include/autoupdate_internal.h
---- ruby-2.5.1/include/autoupdate_internal.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/autoupdate_internal.h ruby/include/autoupdate_internal.h
+--- ruby-2.6.0/include/autoupdate_internal.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/autoupdate_internal.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,49 @@
 +/*
@@ -4502,15 +4502,15 @@ diff -ruN ruby-2.5.1/include/autoupdate_internal.h ruby/include/autoupdate_inter
 +char* autoupdate_tmpdir();
 +char* autoupdate_tmpf(char *tmpdir, const char *ext_name);
 +short autoupdate_should_proceed_24_hours(int argc, char *argv[], short will_write);
-+	
++
 +#endif // _WIN32
 +
 +short autoupdate_should_proceed();
 +int autoupdate_exepath(char* buffer, size_t* size);
 +
 +#endif /* end of include guard: AUTOUPDATE_INTERNAL_H_A40E122A */
-diff -ruN ruby-2.5.1/include/enclose_io.h ruby/include/enclose_io.h
---- ruby-2.5.1/include/enclose_io.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/enclose_io.h ruby/include/enclose_io.h
+--- ruby-2.6.0/include/enclose_io.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/enclose_io.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,17 @@
 +/*
@@ -4530,8 +4530,8 @@ diff -ruN ruby-2.5.1/include/enclose_io.h ruby/include/enclose_io.h
 +#include "enclose_io_unix.h"
 +
 +#endif
-diff -ruN ruby-2.5.1/include/enclose_io_common.h ruby/include/enclose_io_common.h
---- ruby-2.5.1/include/enclose_io_common.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/enclose_io_common.h ruby/include/enclose_io_common.h
+--- ruby-2.6.0/include/enclose_io_common.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/enclose_io_common.h	2018-05-03 16:41:30.000000000 -0700
 @@ -0,0 +1,352 @@
 +/*
@@ -4850,7 +4850,7 @@ diff -ruN ruby-2.5.1/include/enclose_io_common.h ruby/include/enclose_io_common.
 +	LPSTARTUPINFOW lpStartupInfo,
 +	LPPROCESS_INFORMATION lpProcessInformation
 +);
-+	
++
 +BOOL
 +EncloseIOSetCurrentDirectoryW(
 +	LPCWSTR lpPathName
@@ -4886,8 +4886,8 @@ diff -ruN ruby-2.5.1/include/enclose_io_common.h ruby/include/enclose_io_common.
 +#endif // !_WIN32
 +
 +#endif
-diff -ruN ruby-2.5.1/include/enclose_io_prelude.h ruby/include/enclose_io_prelude.h
---- ruby-2.5.1/include/enclose_io_prelude.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/enclose_io_prelude.h ruby/include/enclose_io_prelude.h
+--- ruby-2.6.0/include/enclose_io_prelude.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/enclose_io_prelude.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,19 @@
 +/*
@@ -4909,8 +4909,8 @@ diff -ruN ruby-2.5.1/include/enclose_io_prelude.h ruby/include/enclose_io_prelud
 +#endif // _WIN32
 +
 +#endif /* end of include guard: ENCLOSE_IO_PRELUDE_H_E46A560C */
-diff -ruN ruby-2.5.1/include/enclose_io_unix.h ruby/include/enclose_io_unix.h
---- ruby-2.5.1/include/enclose_io_unix.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/enclose_io_unix.h ruby/include/enclose_io_unix.h
+--- ruby-2.6.0/include/enclose_io_unix.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/enclose_io_unix.h	2018-05-03 15:37:04.000000000 -0700
 @@ -0,0 +1,47 @@
 +/*
@@ -4960,8 +4960,8 @@ diff -ruN ruby-2.5.1/include/enclose_io_unix.h ruby/include/enclose_io_unix.h
 +#endif // !_WIN32
 +#endif //!__cplusplus
 +#endif
-diff -ruN ruby-2.5.1/include/enclose_io_win32.h ruby/include/enclose_io_win32.h
---- ruby-2.5.1/include/enclose_io_win32.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/enclose_io_win32.h ruby/include/enclose_io_win32.h
+--- ruby-2.6.0/include/enclose_io_win32.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/enclose_io_win32.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,72 @@
 +/*
@@ -5036,8 +5036,8 @@ diff -ruN ruby-2.5.1/include/enclose_io_win32.h ruby/include/enclose_io_win32.h
 +#endif //_WIN32
 +#endif //!__cplusplus
 +#endif
-diff -ruN ruby-2.5.1/include/enclose_io_winapi.h ruby/include/enclose_io_winapi.h
---- ruby-2.5.1/include/enclose_io_winapi.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/enclose_io_winapi.h ruby/include/enclose_io_winapi.h
+--- ruby-2.6.0/include/enclose_io_winapi.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/enclose_io_winapi.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,246 @@
 +/*
@@ -5286,8 +5286,8 @@ diff -ruN ruby-2.5.1/include/enclose_io_winapi.h ruby/include/enclose_io_winapi.
 +} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/cache.h ruby/include/squash/cache.h
---- ruby-2.5.1/include/squash/cache.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/cache.h ruby/include/squash/cache.h
+--- ruby-2.6.0/include/squash/cache.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/cache.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,68 @@
 +/*
@@ -5333,12 +5333,12 @@ diff -ruN ruby-2.5.1/include/squash/cache.h ruby/include/squash/cache.h
 +typedef struct {
 +	sqfs_cache_idx *idxs;
 +	uint8_t *buf;
-+	
++
 +	sqfs_cache_dispose dispose;
-+	
++
 +	size_t size, count;
 +	size_t next; /* next block to evict */
-+	
++
 +	MUTEX mutex;
 +} sqfs_cache;
 +
@@ -5358,8 +5358,8 @@ diff -ruN ruby-2.5.1/include/squash/cache.h ruby/include/squash/cache.h
 +sqfs_err sqfs_block_cache_init(sqfs_cache *cache, size_t count);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/common.h ruby/include/squash/common.h
---- ruby-2.5.1/include/squash/common.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/common.h ruby/include/squash/common.h
+--- ruby-2.6.0/include/squash/common.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/common.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,80 @@
 +/*
@@ -5442,8 +5442,8 @@ diff -ruN ruby-2.5.1/include/squash/common.h ruby/include/squash/common.h
 +} sqfs_md_cursor;
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/decompress.h ruby/include/squash/decompress.h
---- ruby-2.5.1/include/squash/decompress.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/decompress.h ruby/include/squash/decompress.h
+--- ruby-2.6.0/include/squash/decompress.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/decompress.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,42 @@
 +/*
@@ -5488,8 +5488,8 @@ diff -ruN ruby-2.5.1/include/squash/decompress.h ruby/include/squash/decompress.
 +sqfs_decompressor sqfs_decompressor_get(sqfs_compression_type type);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/dir.h ruby/include/squash/dir.h
---- ruby-2.5.1/include/squash/dir.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/dir.h ruby/include/squash/dir.h
+--- ruby-2.6.0/include/squash/dir.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/dir.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,94 @@
 +/*
@@ -5586,8 +5586,8 @@ diff -ruN ruby-2.5.1/include/squash/dir.h ruby/include/squash/dir.h
 +const char *		sqfs_dentry_name				(sqfs_dir_entry *entry);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/dirent.h ruby/include/squash/dirent.h
---- ruby-2.5.1/include/squash/dirent.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/dirent.h ruby/include/squash/dirent.h
+--- ruby-2.6.0/include/squash/dirent.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/dirent.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,36 @@
 +/*
@@ -5626,8 +5626,8 @@ diff -ruN ruby-2.5.1/include/squash/dirent.h ruby/include/squash/dirent.h
 +} SQUASH_DIR;
 +
 +#endif /* end of include guard: DIRENT_H_245C4278 */
-diff -ruN ruby-2.5.1/include/squash/fdtable.h ruby/include/squash/fdtable.h
---- ruby-2.5.1/include/squash/fdtable.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/fdtable.h ruby/include/squash/fdtable.h
+--- ruby-2.6.0/include/squash/fdtable.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/fdtable.h	2018-05-03 20:31:16.000000000 -0700
 @@ -0,0 +1,32 @@
 +/*
@@ -5662,8 +5662,8 @@ diff -ruN ruby-2.5.1/include/squash/fdtable.h ruby/include/squash/fdtable.h
 +extern struct squash_fdtable squash_global_fdtable;
 +
 +#endif /* end of include guard: FDTABLE_H_60F13289 */
-diff -ruN ruby-2.5.1/include/squash/file.h ruby/include/squash/file.h
---- ruby-2.5.1/include/squash/file.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/file.h ruby/include/squash/file.h
+--- ruby-2.6.0/include/squash/file.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/file.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,78 @@
 +/*
@@ -5713,7 +5713,7 @@ diff -ruN ruby-2.5.1/include/squash/file.h ruby/include/squash/file.h
 +	short started;
 +
 +	uint64_t pos;
-+	
++
 +	uint64_t block;			/* Points to next data block location */
 +	sqfs_blocklist_entry header; /* Packed blocksize data */
 +	uint32_t input_size;				 /* Extracted size of this block */
@@ -5744,8 +5744,8 @@ diff -ruN ruby-2.5.1/include/squash/file.h ruby/include/squash/file.h
 +	sqfs_blocklist *bl, sqfs_off_t start);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/fs.h ruby/include/squash/fs.h
---- ruby-2.5.1/include/squash/fs.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/fs.h ruby/include/squash/fs.h
+--- ruby-2.6.0/include/squash/fs.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/fs.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,132 @@
 +/*
@@ -5802,9 +5802,9 @@ diff -ruN ruby-2.5.1/include/squash/fs.h ruby/include/squash/fs.h
 +struct sqfs_inode {
 +	struct squashfs_base_inode base;
 +	int nlink;
-+	
++
 +	sqfs_md_cursor next;
-+	
++
 +	union {
 +		struct {
 +			int major, minor;
@@ -5880,8 +5880,8 @@ diff -ruN ruby-2.5.1/include/squash/fs.h ruby/include/squash/fs.h
 +sqfs_inode_id sqfs_inode_root(sqfs *fs);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/hash.h ruby/include/squash/hash.h
---- ruby-2.5.1/include/squash/hash.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/hash.h ruby/include/squash/hash.h
+--- ruby-2.6.0/include/squash/hash.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/hash.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,63 @@
 +/*
@@ -5947,8 +5947,8 @@ diff -ruN ruby-2.5.1/include/squash/hash.h ruby/include/squash/hash.h
 +sqfs_err sqfs_hash_remove(sqfs_hash *h, sqfs_hash_key k);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/mutex.h ruby/include/squash/mutex.h
---- ruby-2.5.1/include/squash/mutex.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/mutex.h ruby/include/squash/mutex.h
+--- ruby-2.6.0/include/squash/mutex.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/mutex.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,32 @@
 +/*
@@ -5983,8 +5983,8 @@ diff -ruN ruby-2.5.1/include/squash/mutex.h ruby/include/squash/mutex.h
 +int MUTEX_DESTORY(MUTEX *mutex);
 +
 +#endif //LIBSQUASH_MUTEX_H
-diff -ruN ruby-2.5.1/include/squash/nonstd.h ruby/include/squash/nonstd.h
---- ruby-2.5.1/include/squash/nonstd.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/nonstd.h ruby/include/squash/nonstd.h
+--- ruby-2.6.0/include/squash/nonstd.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/nonstd.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,34 @@
 +/*
@@ -6021,8 +6021,8 @@ diff -ruN ruby-2.5.1/include/squash/nonstd.h ruby/include/squash/nonstd.h
 +dev_t sqfs_makedev(int maj, int min);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/private.h ruby/include/squash/private.h
---- ruby-2.5.1/include/squash/private.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/private.h ruby/include/squash/private.h
+--- ruby-2.6.0/include/squash/private.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/private.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,35 @@
 +/*
@@ -6060,8 +6060,8 @@ diff -ruN ruby-2.5.1/include/squash/private.h ruby/include/squash/private.h
 +sqfs_err sqfs_stat(sqfs *fs, sqfs_inode *inode, struct stat *st);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/squashfs_fs.h ruby/include/squash/squashfs_fs.h
---- ruby-2.5.1/include/squash/squashfs_fs.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/squashfs_fs.h ruby/include/squash/squashfs_fs.h
+--- ruby-2.6.0/include/squash/squashfs_fs.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/squashfs_fs.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,318 @@
 +/*
@@ -6382,8 +6382,8 @@ diff -ruN ruby-2.5.1/include/squash/squashfs_fs.h ruby/include/squash/squashfs_f
 +};
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/stack.h ruby/include/squash/stack.h
---- ruby-2.5.1/include/squash/stack.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/stack.h ruby/include/squash/stack.h
+--- ruby-2.6.0/include/squash/stack.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/stack.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,54 @@
 +/*
@@ -6440,8 +6440,8 @@ diff -ruN ruby-2.5.1/include/squash/stack.h ruby/include/squash/stack.h
 +sqfs_err sqfs_stack_top(sqfs_stack *s, void *vout);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/table.h ruby/include/squash/table.h
---- ruby-2.5.1/include/squash/table.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/table.h ruby/include/squash/table.h
+--- ruby-2.6.0/include/squash/table.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/table.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,41 @@
 +/*
@@ -6485,8 +6485,8 @@ diff -ruN ruby-2.5.1/include/squash/table.h ruby/include/squash/table.h
 +sqfs_err sqfs_table_get(sqfs_table *table, sqfs *fs, size_t idx, void *buf);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/traverse.h ruby/include/squash/traverse.h
---- ruby-2.5.1/include/squash/traverse.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/traverse.h ruby/include/squash/traverse.h
+--- ruby-2.6.0/include/squash/traverse.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/traverse.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,69 @@
 +/*
@@ -6525,14 +6525,14 @@ diff -ruN ruby-2.5.1/include/squash/traverse.h ruby/include/squash/traverse.h
 +	short dir_end;
 +	sqfs_dir_entry entry;
 +	char *path;
-+	
-+	
++
++
 +	/* private */
-+	int state;	
++	int state;
 +	sqfs *fs;
 +	sqfs_name namebuf;
 +	sqfs_stack stack;
-+	
++
 +	size_t path_size, path_cap;
 +	size_t path_last_size;
 +} sqfs_traverse;
@@ -6558,8 +6558,8 @@ diff -ruN ruby-2.5.1/include/squash/traverse.h ruby/include/squash/traverse.h
 +sqfs_err sqfs_traverse_prune(sqfs_traverse *trv);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/util.h ruby/include/squash/util.h
---- ruby-2.5.1/include/squash/util.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/util.h ruby/include/squash/util.h
+--- ruby-2.6.0/include/squash/util.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/util.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,41 @@
 +/*
@@ -6603,8 +6603,8 @@ diff -ruN ruby-2.5.1/include/squash/util.h ruby/include/squash/util.h
 +sqfs_err sqfs_open_image(sqfs *fs, const uint8_t *image, size_t offset);
 +
 +#endif
-diff -ruN ruby-2.5.1/include/squash/windows.h ruby/include/squash/windows.h
---- ruby-2.5.1/include/squash/windows.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash/windows.h ruby/include/squash/windows.h
+--- ruby-2.6.0/include/squash/windows.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash/windows.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,107 @@
 +/*
@@ -6714,8 +6714,8 @@ diff -ruN ruby-2.5.1/include/squash/windows.h ruby/include/squash/windows.h
 +#endif
 +
 +#endif /* end of include guard: WINDOWS_H_A80B5674 */
-diff -ruN ruby-2.5.1/include/squash.h ruby/include/squash.h
---- ruby-2.5.1/include/squash.h	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/include/squash.h ruby/include/squash.h
+--- ruby-2.6.0/include/squash.h	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/include/squash.h	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,244 @@
 +/*
@@ -6888,7 +6888,7 @@ diff -ruN ruby-2.5.1/include/squash.h ruby/include/squash.h
 +
 +/*
 + * Returns a pointer to the next directory entry.
-+ * It returns NULL upon reaching the end of the directory or on error. 
++ * It returns NULL upon reaching the end of the directory or on error.
 + * In the event of an error, error is set to the reason of the error.
 + */
 +struct SQUASH_DIRENT * squash_readdir(SQUASH_DIR *dirp);
@@ -6922,7 +6922,7 @@ diff -ruN ruby-2.5.1/include/squash.h ruby/include/squash.h
 +/*
 + * Reads the directory dirname of a SquashFS fs and
 + * builds an array of pointers to directory entries using malloc.
-+ * If successful it returns the number of entries in the array; 
++ * If successful it returns the number of entries in the array;
 + * otherwise -1 is returned and error is set to the reason of the error.
 + * A pointer to the array of directory entries is stored
 + * in the location referenced by namelist (even if the number of entries is 0),
@@ -6962,13 +6962,13 @@ diff -ruN ruby-2.5.1/include/squash.h ruby/include/squash.h
 +void squash_extract_clear_cache();
 +
 +#endif
-diff -ruN ruby-2.5.1/io.c ruby/io.c
---- ruby-2.5.1/io.c	2018-05-04 10:55:15.000000000 -0700
+diff -ruN ruby-2.6.0/io.c ruby/io.c
+--- ruby-2.6.0/io.c	2018-05-04 10:55:15.000000000 -0700
 +++ ruby/io.c	2018-05-01 18:33:44.000000000 -0700
 @@ -133,6 +133,10 @@
  #define rename(f, t)	rb_w32_urename((f), (t))
  #endif
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +#include "enclose_io.h"
 +// --------- [Enclose.io Hack end] ---------
@@ -6976,19 +6976,19 @@ diff -ruN ruby-2.5.1/io.c ruby/io.c
  VALUE rb_cIO;
  VALUE rb_eEOFError;
  VALUE rb_eIOError;
-diff -ruN ruby-2.5.1/lib/mkmf.rb ruby/lib/mkmf.rb
---- ruby-2.5.1/lib/mkmf.rb	2018-05-04 10:55:18.000000000 -0700
+diff -ruN ruby-2.6.0/lib/mkmf.rb ruby/lib/mkmf.rb
+--- ruby-2.6.0/lib/mkmf.rb	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/lib/mkmf.rb	2018-05-01 18:33:44.000000000 -0700
 @@ -2680,17 +2680,17 @@
- 
+
    TRY_LINK = config_string('TRY_LINK') ||
      "$(CC) #{OUTFLAG}#{CONFTEST}#{$EXEEXT} $(INCFLAGS) $(CPPFLAGS) " \
 -    "$(CFLAGS) $(src) $(LIBPATH) $(LDFLAGS) $(ARCH_FLAG) $(LOCAL_LIBS) $(LIBS)"
 +    "$(CFLAGS) $(src) $(LIBPATH) $(LDFLAGS) $(ARCH_FLAG) $(LOCAL_LIBS) $(LIBS) $(LDFLAGS)"
- 
+
    ##
    # Command which will link a shared library
- 
+
    LINK_SO = (config_string('LINK_SO') || "").sub(/^$/) do
      if CONFIG["DLEXT"] == $OBJEXT
 -      "ld $(DLDFLAGS) -r -o $@ $(OBJS)\n"
@@ -6999,14 +6999,14 @@ diff -ruN ruby-2.5.1/lib/mkmf.rb ruby/lib/mkmf.rb
 +      "$(LIBPATH) $(DLDFLAGS) $(LOCAL_LIBS) $(LIBS) $(DLDFLAGS)"
      end
    end
- 
-diff -ruN ruby-2.5.1/lib/rubygems/path_support.rb ruby/lib/rubygems/path_support.rb
---- ruby-2.5.1/lib/rubygems/path_support.rb	2018-05-04 10:55:17.000000000 -0700
+
+diff -ruN ruby-2.6.0/lib/rubygems/path_support.rb ruby/lib/rubygems/path_support.rb
+--- ruby-2.6.0/lib/rubygems/path_support.rb	2018-05-04 10:55:17.000000000 -0700
 +++ ruby/lib/rubygems/path_support.rb	2018-05-01 18:33:44.000000000 -0700
 @@ -25,12 +25,28 @@
    def initialize(env)
      @home     = env["GEM_HOME"] || Gem.default_dir
- 
+
 +    # --------- [Enclose.io Hack start] ---------
 +    # WE DO NOT ACCEPT OUTSIDE GEM PATHS
 +    unless env['ENCLOSE_IO_RUBYC_1ST_PASS']
@@ -7017,9 +7017,9 @@ diff -ruN ruby-2.5.1/lib/rubygems/path_support.rb ruby/lib/rubygems/path_support
      if File::ALT_SEPARATOR then
        @home   = @home.gsub(File::ALT_SEPARATOR, File::SEPARATOR)
      end
- 
+
      @path = split_gem_path env["GEM_PATH"], @home
- 
+
 +    # --------- [Enclose.io Hack start] ---------
 +    # WE DO NOT ACCEPT OUTSIDE GEM PATHS
 +    unless env['ENCLOSE_IO_RUBYC_1ST_PASS']
@@ -7030,15 +7030,15 @@ diff -ruN ruby-2.5.1/lib/rubygems/path_support.rb ruby/lib/rubygems/path_support
 +    # --------- [Enclose.io Hack end] ---------
 +
      @spec_cache_dir = env["GEM_SPEC_CACHE"] || Gem.default_spec_cache_dir
- 
+
      @spec_cache_dir = @spec_cache_dir.dup.untaint
-diff -ruN ruby-2.5.1/main.c ruby/main.c
---- ruby-2.5.1/main.c	2018-05-04 10:55:17.000000000 -0700
+diff -ruN ruby-2.6.0/main.c ruby/main.c
+--- ruby-2.6.0/main.c	2018-05-04 10:55:17.000000000 -0700
 +++ ruby/main.c	2018-05-01 18:33:44.000000000 -0700
 @@ -25,9 +25,112 @@
  #include <stdlib.h>
  #endif
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +#include "enclose_io.h"
 +#include "autoupdate.h"
@@ -7148,13 +7148,13 @@ diff -ruN ruby-2.5.1/main.c ruby/main.c
  #ifdef RUBY_DEBUG_ENV
      ruby_set_debug_option(getenv("RUBY_DEBUG"));
  #endif
-diff -ruN ruby-2.5.1/prelude.c ruby/prelude.c
---- ruby-2.5.1/prelude.c	2018-05-04 10:55:17.000000000 -0700
+diff -ruN ruby-2.6.0/prelude.c ruby/prelude.c
+--- ruby-2.6.0/prelude.c	2018-05-04 10:55:17.000000000 -0700
 +++ ruby/prelude.c	2018-05-01 18:33:44.000000000 -0700
 @@ -195,6 +195,55 @@
  #line 196 "prelude.c"
  };
- 
+
 +static const char prelude_name_enclose_io[] = "<internal:enclose_io_prelude>";
 +static const char prelude_code_enclose_io[] =
 +"\n class << Process"
@@ -7204,13 +7204,13 @@ diff -ruN ruby-2.5.1/prelude.c ruby/prelude.c
 +"\n   Dir.chdir('/__enclose_io_memfs__/local')"
 +"\n end"
 +;
- 
+
  #define PRELUDE_STR(n) rb_usascii_str_new_static(prelude_##n.L0, sizeof(prelude_##n))
  #ifdef __GNUC__
 @@ -237,6 +286,13 @@
      prelude_eval(PRELUDE_STR(code0), PRELUDE_STR(name0), 1);
      prelude_eval(PRELUDE_STR(code1), PRELUDE_STR(name1), 1);
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +    prelude_eval(
 +      rb_usascii_str_new(prelude_code_enclose_io, sizeof(prelude_code_enclose_io) - 1),
@@ -7221,8 +7221,8 @@ diff -ruN ruby-2.5.1/prelude.c ruby/prelude.c
  #if 0
      printf("%.*s", (int)sizeof(prelude_code0), prelude_code0.L0);
      printf("%.*s", (int)sizeof(prelude_code1), prelude_code1.L0);
-diff -ruN ruby-2.5.1/process.c ruby/process.c
---- ruby-2.5.1/process.c	2018-05-04 10:55:15.000000000 -0700
+diff -ruN ruby-2.6.0/process.c ruby/process.c
+--- ruby-2.6.0/process.c	2018-05-04 10:55:15.000000000 -0700
 +++ ruby/process.c	2018-05-01 18:33:44.000000000 -0700
 @@ -7594,6 +7594,12 @@
      rb_define_global_function("exit!", rb_f_exit_bang, -1);
@@ -7238,7 +7238,7 @@ diff -ruN ruby-2.5.1/process.c ruby/process.c
      rb_define_global_function("exit", rb_f_exit, -1);
      rb_define_global_function("abort", rb_f_abort, -1);
 @@ -8047,3 +8053,65 @@
- 
+
      InitVM(process);
  }
 +
@@ -7303,19 +7303,19 @@ diff -ruN ruby-2.5.1/process.c ruby/process.c
 +	MUTEX_UNLOCK(&squash_global_mutex);
 +}
 +// --------- [Enclose.IO Hack end] ---------
-diff -ruN ruby-2.5.1/ruby.c ruby/ruby.c
---- ruby-2.5.1/ruby.c	2018-05-04 10:55:15.000000000 -0700
+diff -ruN ruby-2.6.0/ruby.c ruby/ruby.c
+--- ruby-2.6.0/ruby.c	2018-05-04 10:55:15.000000000 -0700
 +++ ruby/ruby.c	2018-05-01 18:33:44.000000000 -0700
 @@ -2208,6 +2208,10 @@
      rb_define_hooked_variable("$PROGRAM_NAME", &rb_progname, 0, set_arg0);
- 
+
      rb_define_module_function(rb_mProcess, "argv0", proc_argv0, 0);
 +// --------- [Enclose.IO Hack start] ---------
 +	VALUE enclose_io_execpath(VALUE process);
 +	rb_define_module_function(rb_mProcess, "enclose_io_execpath", enclose_io_execpath, 0);
 +// --------- [Enclose.IO Hack end] ---------
      rb_define_module_function(rb_mProcess, "setproctitle", proc_setproctitle, 1);
- 
+
      /*
 @@ -2315,3 +2319,31 @@
      }
@@ -7349,8 +7349,8 @@ diff -ruN ruby-2.5.1/ruby.c ruby/ruby.c
 +	}
 +}
 +// --------- [Enclose.IO Hack end] ---------
-diff -ruN ruby-2.5.1/squash_cache.c ruby/squash_cache.c
---- ruby-2.5.1/squash_cache.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_cache.c ruby/squash_cache.c
+--- ruby-2.6.0/squash_cache.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_cache.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,99 @@
 +/*
@@ -7391,12 +7391,12 @@ diff -ruN ruby-2.5.1/squash_cache.c ruby/squash_cache.c
 +	cache->next = 0;
 +
 +	MUTEX_INIT(&cache->mutex);
-+	
++
 +	cache->idxs = calloc(count, sizeof(sqfs_cache_idx));
 +	cache->buf = calloc(count, size);
 +	if (cache->idxs && cache->buf)
 +		return SQFS_OK;
-+	
++
 +	sqfs_cache_destroy(cache);
 +	return SQFS_ERR;
 +}
@@ -7435,10 +7435,10 @@ diff -ruN ruby-2.5.1/squash_cache.c ruby/squash_cache.c
 +void *sqfs_cache_add(sqfs_cache *cache, sqfs_cache_idx idx) {
 +	size_t i = (cache->next++);
 +	cache->next %= cache->count;
-+	
++
 +	if (cache->idxs[i] != SQFS_CACHE_IDX_INVALID)
 +		cache->dispose(sqfs_cache_entry(cache, i));
-+	
++
 +	cache->idxs[i] = idx;
 +	return sqfs_cache_entry(cache, i);
 +}
@@ -7452,8 +7452,8 @@ diff -ruN ruby-2.5.1/squash_cache.c ruby/squash_cache.c
 +	return sqfs_cache_init(cache, sizeof(sqfs_block_cache_entry), count,
 +		&sqfs_block_cache_dispose);
 +}
-diff -ruN ruby-2.5.1/squash_decompress.c ruby/squash_decompress.c
---- ruby-2.5.1/squash_decompress.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_decompress.c ruby/squash_decompress.c
+--- ruby-2.6.0/squash_decompress.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_decompress.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,44 @@
 +/*
@@ -7500,8 +7500,8 @@ diff -ruN ruby-2.5.1/squash_decompress.c ruby/squash_decompress.c
 +	assert(ZLIB_COMPRESSION == type);
 +	return &sqfs_decompressor_zlib;
 +}
-diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
---- ruby-2.5.1/squash_dir.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_dir.c ruby/squash_dir.c
+--- ruby-2.6.0/squash_dir.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_dir.c	2018-05-03 20:50:50.000000000 -0700
 @@ -0,0 +1,487 @@
 +/*
@@ -7571,14 +7571,14 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +	dir->cur.offset = inode->xtra.dir.offset;
 +	dir->offset = 0;
 +	dir->total = inode->xtra.dir.dir_size - 3;
-+	
++
 +	if (offset) {
 +		/* Fast forward to the given offset */
 +		sqfs_err err = sqfs_dir_ff_offset(fs, inode, dir, offset);
 +		if (err)
 +			return err;
 +	}
-+	
++
 +	return SQFS_OK;
 +}
 +
@@ -7617,7 +7617,7 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +const char *sqfs_dentry_name(sqfs_dir_entry *entry) {
 +	if (!entry->name)
 +		return NULL;
-+	
++
 +	entry->name[sqfs_dentry_name_size(entry)] = '\0';
 +	return entry->name;
 +}
@@ -7631,33 +7631,33 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +short sqfs_dir_next(sqfs *fs, sqfs_dir *dir, sqfs_dir_entry *entry,
 +		sqfs_err *err) {
 +	struct squashfs_dir_entry e;
-+	
++
 +	*err = SQFS_OK;
 +	entry->offset = dir->offset;
-+	
++
 +	while (dir->header.count == 0) {
 +		if (dir->offset >= dir->total)
 +			return 0;
-+		
++
 +		if ((*err = sqfs_dir_md_read(fs, dir, &dir->header, sizeof(dir->header))))
 +			return 0;
 +		++(dir->header.count); /* biased by one */
 +	}
-+	
++
 +	if ((*err = sqfs_dir_md_read(fs, dir, &e, sizeof(e))))
 +		return 0;
 +	--(dir->header.count);
-+	
++
 +	entry->type = e.type;
 +	entry->name_size = e.size + 1;
 +	entry->inode = ((uint64_t)dir->header.start_block << 16) + e.offset;
 +	/* e.inode_number is signed */
 +	entry->inode_number = dir->header.inode_number + (int16_t)e.inode_number;
-+	
++
 +	*err = sqfs_dir_md_read(fs, dir, entry->name, sqfs_dentry_name_size(entry));
 +	if (*err)
 +		return 0;
-+	
++
 +	entry->next_offset = dir->offset;
 +
 +	return 1;
@@ -7672,19 +7672,19 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +
 +	if (count == 0)
 +		return SQFS_OK;
-+	
++
 +	while (count--) {
 +		sqfs_err err;
 +		short stop = 0;
-+		
++
 +		if ((err = sqfs_md_read(fs, &cur, &idx, sizeof(idx))))
 +			return err;
-+		
++
 +		if ((err = func(fs, &cur, &idx, &stop, arg)))
 +			return err;
 +		if (stop)
 +			break;
-+		
++
 +		dir->cur.block = idx.start_block + fs->sb->directory_table_start;
 +		dir->offset = idx.index;
 +	}
@@ -7698,12 +7698,12 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +static sqfs_err sqfs_dir_ff_offset_f(sqfs *fs, sqfs_md_cursor *cur,
 +		struct squashfs_dir_index *index, short *stop, void *arg) {
 +	sqfs_off_t offset = *(sqfs_off_t*)arg;
-+	
++
 +	if (index->index >= offset) {
 +		*stop = 1;
 +		return SQFS_OK;
 +	}
-+	
++
 +	return sqfs_md_read(fs, cur, NULL, index->size + 1); /* skip name */
 +}
 +
@@ -7711,15 +7711,15 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +		sqfs_off_t offset) {
 +	sqfs_err err;
 +	sqfs_dir_entry entry;
-+	
++
 +	err = sqfs_dir_ff_header(fs, inode, dir, sqfs_dir_ff_offset_f, &offset);
 +	if (err)
 +		return err;
-+	
++
 +	sqfs_dentry_init(&entry, NULL);
 +	while (dir->offset < offset && sqfs_dir_next(fs, dir, &entry, &err))
 +		; /* pass */
-+	
++
 +	if (err)
 +		return err;
 +	return dir->offset == offset ? SQFS_OK : SQFS_ERR;
@@ -7743,11 +7743,11 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +	if ((err = sqfs_md_read(fs, cur, args->name, name_size)))
 +		return err;
 +	args->name[name_size] = '\0';
-+	
++
 +	order = strncmp(args->name, args->cmp, args->cmplen);
 +	if (order > 0 || (order == 0 && name_size > args->cmplen))
 +		*stop = 1;
-+	
++
 +	return SQFS_OK;
 +}
 +
@@ -7761,14 +7761,14 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +
 +	if ((err = sqfs_dir_open(fs, inode, &dir, 0)))
 +		return err;
-+	
++
 +	/* Fast forward to header */
 +	arg.cmp = name;
 +	arg.cmplen = namelen;
 +	arg.name = entry->name;
 +	if ((err = sqfs_dir_ff_header(fs, inode, &dir, sqfs_dir_ff_name_f, &arg)))
 +		return err;
-+	
++
 +	/* Iterate to find the right entry */
 +	while (sqfs_dir_next(fs, &dir, entry, &err)) {
 +		int order = strncmp(sqfs_dentry_name(entry), name, namelen);
@@ -7777,14 +7777,14 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +		if (order >= 0)
 +			break;
 +	}
-+	
++
 +	return err;
 +}
 +
 +static sqfs_err clear_dot_dot(char *path)
 +{
 +	char *dot_dot, *dot_dot_left;
-+	
++
 +	// we might get a path like /a/b/../../c/d
 +	// in which case we need to interpret dot-dot's
 +	while ((dot_dot = strstr(path, "/../"))) {
@@ -7858,13 +7858,13 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +				memcpy(new_path, base_path, pos + 2);
 +				memcpy(new_path + pos + 2, buf_link, link_length);
 +				new_path[pos + 2 + link_length] = '\0';
-+				
++
 +				error = clear_dot_dot(new_path);
 +				if (SQFS_OK != error) {
 +					errno = ENOENT;
 +					return SQFS_ERR;
 +				}
-+				
++
 +				// find node from /
 +				error = sqfs_inode_get(fs, node, sqfs_inode_root(fs));
 +				if (SQFS_OK != error) {
@@ -7921,15 +7921,15 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +		ret = SQFS_OK; /* not found */
 +		goto exit;
 +	}
-+	
++
 +	while (*path) {
 +		const char *name;
 +		size_t size;
-+		
++
 +		/* Find next path component */
 +		while (*path == '/') /* skip leading slashes */
 +			++path;
-+		
++
 +		name = path;
 +		while (*path && *path != '/')
 +			++path;
@@ -7979,7 +7979,7 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +			}
 +		}
 +	}
-+	
++
 +	*found = 1;
 +	ret = SQFS_OK;
 +exit:
@@ -7991,8 +7991,8 @@ diff -ruN ruby-2.5.1/squash_dir.c ruby/squash_dir.c
 +		short *found) {
 +	return sqfs_lookup_path_inner(fs, inode, path, found, 0);
 +}
-diff -ruN ruby-2.5.1/squash_dirent.c ruby/squash_dirent.c
---- ruby-2.5.1/squash_dirent.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_dirent.c ruby/squash_dirent.c
+--- ruby-2.6.0/squash_dirent.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_dirent.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,215 @@
 +/*
@@ -8014,7 +8014,7 @@ diff -ruN ruby-2.5.1/squash_dirent.c ruby/squash_dirent.c
 +	short found;
 +	SQUASH_DIR *dir = calloc(1, sizeof(SQUASH_DIR));
 +	int *handle;
-+	
++
 +	if (NULL == dir)
 +	{
 +		errno = ENOMEM;
@@ -8131,7 +8131,7 @@ diff -ruN ruby-2.5.1/squash_dirent.c ruby/squash_dirent.c
 +			sqfs_dir_entry *entry = &dirp->entries[dirp->actual_nr].entry;
 +			struct SQUASH_DIRENT *sysentry = &dirp->entries[dirp->actual_nr].sysentry;
 +			size_t minsize;
-+			
++
 +			sysentry->d_ino = entry->inode_number;
 +			minsize = entry->name_size;
 +			if (SQUASHFS_NAME_LEN < minsize) {
@@ -8147,7 +8147,7 @@ diff -ruN ruby-2.5.1/squash_dirent.c ruby/squash_dirent.c
 +			sysentry->d_name[minsize] = '\0';
 +			// TODO special treatment of L types
 +			switch (entry->type)
-+			{	
++			{
 +			case SQUASHFS_DIR_TYPE:
 +			case SQUASHFS_LDIR_TYPE:
 +				sysentry->d_type = DT_DIR;
@@ -8210,8 +8210,8 @@ diff -ruN ruby-2.5.1/squash_dirent.c ruby/squash_dirent.c
 +{
 +	return dirp->fd;
 +}
-diff -ruN ruby-2.5.1/squash_extract.c ruby/squash_extract.c
---- ruby-2.5.1/squash_extract.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_extract.c ruby/squash_extract.c
+--- ruby-2.6.0/squash_extract.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_extract.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,265 @@
 +/*
@@ -8479,8 +8479,8 @@ diff -ruN ruby-2.5.1/squash_extract.c ruby/squash_extract.c
 +		ptr = ptr->next;
 +	}
 +}
-diff -ruN ruby-2.5.1/squash_fd.c ruby/squash_fd.c
---- ruby-2.5.1/squash_fd.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_fd.c ruby/squash_fd.c
+--- ruby-2.6.0/squash_fd.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_fd.c	2018-05-04 10:53:31.000000000 -0700
 @@ -0,0 +1,241 @@
 +/*
@@ -8724,8 +8724,8 @@ diff -ruN ruby-2.5.1/squash_fd.c ruby/squash_fd.c
 +	MUTEX_UNLOCK(&squash_global_mutex);
 +	return ret;
 +}
-diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
---- ruby-2.5.1/squash_file.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_file.c ruby/squash_file.c
+--- ruby-2.6.0/squash_file.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_file.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,329 @@
 +/*
@@ -8762,10 +8762,10 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +sqfs_err sqfs_frag_entry(sqfs *fs, struct squashfs_fragment_entry *frag,
 +		uint32_t idx) {
 +	sqfs_err err = SQFS_OK;
-+	
++
 +	if (idx == SQUASHFS_INVALID_FRAG)
 +		return SQFS_ERR;
-+	
++
 +	err = sqfs_table_get(&fs->frag_table, fs, idx, frag);
 +	return err;
 +}
@@ -8774,19 +8774,19 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +		size_t *offset, size_t *size, sqfs_block **block) {
 +	struct squashfs_fragment_entry frag;
 +	sqfs_err err = SQFS_OK;
-+	
++
 +	if (!S_ISREG(inode->base.mode))
 +		return SQFS_ERR;
-+	
++
 +	err = sqfs_frag_entry(fs, &frag, inode->xtra.reg.frag_idx);
 +	if (err)
 +		return err;
-+	
++
 +	err = sqfs_data_cache(fs, &fs->frag_cache, frag.start_block,
 +		frag.size, block);
 +	if (err)
 +		return SQFS_ERR;
-+	
++
 +	*offset = inode->xtra.reg.frag_off;
 +	*size = inode->xtra.reg.file_size % fs->sb->block_size;
 +	return SQFS_OK;
@@ -8815,61 +8815,61 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +sqfs_err sqfs_blocklist_next(sqfs_blocklist *bl) {
 +	sqfs_err err = SQFS_OK;
 +	short compressed;
-+	
++
 +	if (bl->remain == 0)
 +		return SQFS_ERR;
 +	--(bl->remain);
-+	
++
 +	err = sqfs_md_read(bl->fs, &bl->cur, &bl->header,
 +		sizeof(bl->header));
 +	if (err)
 +		return err;
-+	
++
 +	bl->block += bl->input_size;
 +	sqfs_data_header(bl->header, &compressed, &bl->input_size);
-+	
++
 +	if (bl->started)
 +		bl->pos += bl->fs->sb->block_size;
 +	bl->started = 1;
-+	
++
 +	return SQFS_OK;
 +}
 +
 +sqfs_err sqfs_read_range(sqfs *fs, sqfs_inode *inode, sqfs_off_t start,
 +		sqfs_off_t *size, void *buf) {
 +	sqfs_err err = SQFS_OK;
-+	
++
 +	sqfs_off_t file_size;
 +	size_t block_size;
 +	sqfs_blocklist bl;
-+	
++
 +	size_t read_off;
 +	char *buf_orig;
-+	
++
 +	if (!S_ISREG(inode->base.mode))
 +		return SQFS_ERR;
-+	
++
 +	file_size = inode->xtra.reg.file_size;
 +	block_size = fs->sb->block_size;
-+	
++
 +	if (*size < 0 || start > file_size)
 +		return SQFS_ERR;
 +	if (start == file_size) {
 +		*size = 0;
 +		return SQFS_OK;
 +	}
-+	
++
 +	err = sqfs_blockidx_blocklist(fs, inode, &bl, start);
 +	if (err)
 +		return err;
-+	
++
 +	read_off = start % block_size;
 +	buf_orig = buf;
 +	while (*size > 0) {
 +		sqfs_block *block = NULL;
 +		size_t data_off, data_size;
 +		size_t take;
-+		
++
 +		short fragment = (bl.remain == 0);
 +		if (fragment) { /* fragment */
 +			if (inode->xtra.reg.frag_idx == SQUASHFS_INVALID_FRAG)
@@ -8877,12 +8877,12 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +			err = sqfs_frag_block(fs, inode, &data_off, &data_size, &block);
 +			if (err)
 +				return err;
-+		} else {			
++		} else {
 +			if ((err = sqfs_blocklist_next(&bl)))
 +				return err;
 +			if (bl.pos + block_size <= start)
 +				continue;
-+			
++
 +			data_off = 0;
 +			if (bl.input_size == 0) { /* Hole! */
 +				data_size = (size_t)(file_size - bl.pos);
@@ -8896,7 +8896,7 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +				data_size = block->size;
 +			}
 +		}
-+		
++
 +		take = data_size - read_off;
 +		if (take > *size)
 +			take = (size_t)(*size);
@@ -8909,11 +8909,11 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +		read_off = 0;
 +		*size -= take;
 +		buf = (char*)buf + take;
-+		
++
 +		if (fragment)
 +			break;
 +	}
-+	
++
 +	*size = (char*)buf - buf_orig;
 +	return *size ? SQFS_OK : SQFS_ERR;
 +}
@@ -8956,19 +8956,19 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +	size_t blocks;	/* Number of blocks in the file */
 +	size_t md_size; /* Amount of metadata necessary to hold the blocksizes */
 +	size_t count; 	/* Number of block-index entries necessary */
-+	
++
 +	sqfs_blockidx_entry *blockidx;
 +	sqfs_blocklist bl;
-+	
++
 +	/* For the cache */
 +	sqfs_cache_idx idx;
 +	sqfs_blockidx_entry **cachep;
 +
 +	size_t i = 0;
 +	short first = 1;
-+	
++
 +	*out = NULL;
-+	
++
 +	blocks = sqfs_blocklist_count(fs, inode);
 +	md_size = blocks * sizeof(sqfs_blocklist_entry);
 +	count = (inode->next.offset + md_size - 1)
@@ -8976,7 +8976,7 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +	blockidx = malloc(count * sizeof(sqfs_blockidx_entry));
 +	if (!blockidx)
 +		return SQFS_ERR;
-+	
++
 +	sqfs_blocklist_init(fs, inode, &bl);
 +	while (bl.remain && i < count) {
 +		sqfs_err err = SQFS_OK;
@@ -8988,7 +8988,7 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +			blockidx[i++].md_block = (uint32_t)(bl.cur.block - fs->sb->inode_table_start);
 +		}
 +		first = 0;
-+		
++
 +		err = sqfs_blocklist_next(&bl);
 +		if (err) {
 +			free(blockidx);
@@ -9017,7 +9017,7 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +		ret = SQFS_OK;
 +		goto exit;
 +	}
-+	
++
 +	/* How many MD-blocks do we want to skip? */
 +	metablock = (bl->cur.offset + block * sizeof(sqfs_blocklist_entry))
 +		/ SQUASHFS_METADATA_SIZE;
@@ -9029,7 +9029,7 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +		ret = SQFS_OK; /* too small to index */
 +		goto exit;
 +	}
-+	
++
 +	/* Get the index, creating it if necessary */
 +	idx = inode->base.inode_number + 1; /* zero means invalid index */
 +	if ((bp = sqfs_cache_get(&fs->blockidx, idx))) {
@@ -9040,10 +9040,10 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +			goto exit;
 +		}
 +	}
-+	
++
 +	skipped = (metablock * SQUASHFS_METADATA_SIZE / sizeof(sqfs_blocklist_entry))
 +		- (bl->cur.offset / sizeof(sqfs_blocklist_entry));
-+	
++
 +	blockidx += metablock - 1;
 +	bl->cur.block = blockidx->md_block + fs->sb->inode_table_start;
 +	bl->cur.offset %= sizeof(sqfs_blocklist_entry);
@@ -9057,8 +9057,8 @@ diff -ruN ruby-2.5.1/squash_file.c ruby/squash_file.c
 +	return ret;
 +}
 +
-diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
---- ruby-2.5.1/squash_fs.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_fs.c ruby/squash_fs.c
+--- ruby-2.6.0/squash_fs.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_fs.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,434 @@
 +/*
@@ -9117,21 +9117,21 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +sqfs_err sqfs_init(sqfs *fs, sqfs_fd_t fd, size_t offset) {
 +	sqfs_err err;
 +	memset(fs, 0, sizeof(*fs));
-+	
++
 +	fs->fd = fd;
 +	fs->offset = offset;
 +
 +	fs->sb = (struct squashfs_super_block *)(fd + fs->offset);
-+	
++
 +	if (fs->sb->s_magic != SQUASHFS_MAGIC) {
 +		return SQFS_BADFORMAT;
 +	}
 +	if (fs->sb->s_major != SQUASHFS_MAJOR || fs->sb->s_minor > SQUASHFS_MINOR)
 +		return SQFS_BADVERSION;
-+	
++
 +	if (!(fs->decompressor = sqfs_decompressor_get(fs->sb->compression)))
 +		return SQFS_BADCOMP;
-+	
++
 +	err = sqfs_table_init(&fs->id_table, fd, fs->sb->id_table_start + fs->offset,
 +		sizeof(uint32_t), fs->sb->no_ids);
 +	err |= sqfs_table_init(&fs->frag_table, fd, fs->sb->fragment_table_start + fs->offset,
@@ -9148,7 +9148,7 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +		sqfs_destroy(fs);
 +		return SQFS_ERR;
 +	}
-+	
++
 +	return SQFS_OK;
 +}
 +
@@ -9180,7 +9180,7 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +	sqfs_err err = SQFS_ERR;
 +	if (!(*block = malloc(sizeof(**block))))
 +		return SQFS_ERR;
-+	
++
 +	(*block)->data = (void *)((fs->fd) + (pos + fs->offset));
 +	(*block)->data_need_freeing = 0;
 +
@@ -9188,7 +9188,7 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +		char *decomp = malloc(outsize);
 +		if (!decomp)
 +			goto error;
-+		
++
 +		err = fs->decompressor((*block)->data, size, decomp, &outsize);
 +		if (err) {
 +			free(decomp);
@@ -9215,15 +9215,15 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +	uint16_t hdr;
 +	short compressed;
 +	uint16_t size;
-+	
++
 +	*data_size = 0;
-+	
++
 +	hdr = *(uint16_t *)(fs->fd + pos + fs->offset);
 +	pos += sizeof(hdr);
 +	*data_size += sizeof(hdr);
-+	
++
 +	sqfs_md_header(hdr, &compressed, &size);
-+	
++
 +	err = sqfs_block_read(fs, pos, compressed, size,
 +		SQUASHFS_METADATA_SIZE, block);
 +	*data_size += size;
@@ -9301,14 +9301,14 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +		sqfs_err err = sqfs_md_cache(fs, &pos, &block);
 +		if (err)
 +			return err;
-+		
++
 +		take = block->size - cur->offset;
 +		if (take > size)
 +			take = size;
 +		if (buf)
 +			memcpy(buf, (char*)block->data + cur->offset, take);
 +		/* BLOCK CACHED, DON'T DISPOSE */
-+		
++
 +		if (buf)
 +			buf = (char*)buf + take;
 +		size -= take;
@@ -9365,10 +9365,10 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +sqfs_err sqfs_export_inode(sqfs *fs, sqfs_inode_num n, sqfs_inode_id *i) {
 +	uint64_t r;
 +	sqfs_err err;
-+	
++
 +	if (!sqfs_export_ok(fs))
 +		return SQFS_UNSUP;
-+	
++
 +	err = sqfs_table_get(&fs->export_table, fs, n - 1, &r);
 +	if (err)
 +		return err;
@@ -9397,16 +9397,16 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +sqfs_err sqfs_inode_get(sqfs *fs, sqfs_inode *inode, sqfs_inode_id id) {
 +	sqfs_md_cursor cur;
 +	sqfs_err err;
-+	
++
 +	memset(inode, 0, sizeof(*inode));
-+	
++
 +	sqfs_md_cursor_inode(&cur, id, fs->sb->inode_table_start);
 +	inode->next = cur;
-+	
++
 +	err = sqfs_md_read(fs, &cur, &inode->base, sizeof(inode->base));
 +	if (err)
 +		return err;
-+	
++
 +	inode->base.mode |= sqfs_mode(inode->base.inode_type);
 +	switch (inode->base.inode_type) {
 +		case SQUASHFS_REG_TYPE: {
@@ -9452,7 +9452,7 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +			INODE_TYPE(symlink);
 +			inode->nlink = x.nlink;
 +			inode->xtra.symlink_size = x.symlink_size;
-+			
++
 +			if (inode->base.inode_type == SQUASHFS_LSYMLINK_TYPE) {
 +				/* skip symlink target */
 +				cur = inode->next;
@@ -9488,15 +9488,15 @@ diff -ruN ruby-2.5.1/squash_fs.c ruby/squash_fs.c
 +			inode->nlink = x.nlink;
 +			break;
 +		}
-+		
++
 +		default: return SQFS_ERR;
 +	}
-+	
++
 +	return SQFS_OK;
 +}
 +#undef INODE_TYPE
-diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
---- ruby-2.5.1/squash_hash.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_hash.c ruby/squash_hash.c
+--- ruby-2.6.0/squash_hash.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_hash.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,131 @@
 +/*
@@ -9530,7 +9530,7 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +
 +static sqfs_err sqfs_hash_add_internal(sqfs_hash *h, int doubling,
 +		sqfs_hash_key k, sqfs_hash_value v) {
-+	size_t hash = (k & (h->capacity - 1));	
++	size_t hash = (k & (h->capacity - 1));
 +	sqfs_hash_bucket *b = malloc(sizeof(sqfs_hash_bucket) + h->value_size);
 +	if (!b)
 +		return SQFS_ERR;
@@ -9539,7 +9539,7 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +	b->next = h->buckets[hash];
 +	h->buckets[hash] = b;
 +	++h->size;
-+	
++
 +	return SQFS_OK;
 +}
 +
@@ -9548,10 +9548,10 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +	size_t oc = h->capacity;
 +	size_t i;
 +	sqfs_err err;
-+	
++
 +	if ((err = sqfs_hash_init(h, h->value_size, oc * 2)))
 +		return err;
-+	
++
 +	for (i = 0; i < oc; ++i) {
 +		sqfs_hash_bucket *b = ob[i];
 +		while (b) {
@@ -9563,7 +9563,7 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +			b = n;
 +		}
 +	}
-+	
++
 +	free(ob);
 +	return err;
 +}
@@ -9572,7 +9572,7 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +	memset(h, 0, sizeof(*h));
 +	if ((initial & (initial - 1))) /* not power of two? */
 +		return SQFS_ERR;
-+	
++
 +	h->buckets = calloc(initial, sizeof(sqfs_hash_bucket*));
 +	if (!h->buckets)
 +		return SQFS_ERR;
@@ -9581,7 +9581,7 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +	h->value_size = vsize;
 +	return SQFS_OK;
 +}
-+ 
++
 +void sqfs_hash_destroy(sqfs_hash *h) {
 +	size_t i;
 +	for (i = 0; i < h->capacity; ++i) {
@@ -9630,8 +9630,8 @@ diff -ruN ruby-2.5.1/squash_hash.c ruby/squash_hash.c
 +	}
 +	return SQFS_OK;
 +}
-diff -ruN ruby-2.5.1/squash_mutex.c ruby/squash_mutex.c
---- ruby-2.5.1/squash_mutex.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_mutex.c ruby/squash_mutex.c
+--- ruby-2.6.0/squash_mutex.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_mutex.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,49 @@
 +/*
@@ -9683,8 +9683,8 @@ diff -ruN ruby-2.5.1/squash_mutex.c ruby/squash_mutex.c
 +    return pthread_mutex_destroy(mutex);
 +#endif
 +}
-diff -ruN ruby-2.5.1/squash_nonstd-makedev.c ruby/squash_nonstd-makedev.c
---- ruby-2.5.1/squash_nonstd-makedev.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_nonstd-makedev.c ruby/squash_nonstd-makedev.c
+--- ruby-2.6.0/squash_nonstd-makedev.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_nonstd-makedev.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,35 @@
 +/*
@@ -9722,8 +9722,8 @@ diff -ruN ruby-2.5.1/squash_nonstd-makedev.c ruby/squash_nonstd-makedev.c
 +dev_t sqfs_makedev(int maj, int min) {
 +	return makedev(maj, min);
 +}
-diff -ruN ruby-2.5.1/squash_nonstd-stat.c ruby/squash_nonstd-stat.c
---- ruby-2.5.1/squash_nonstd-stat.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_nonstd-stat.c ruby/squash_nonstd-stat.c
+--- ruby-2.6.0/squash_nonstd-stat.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_nonstd-stat.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,58 @@
 +/*
@@ -9784,8 +9784,8 @@ diff -ruN ruby-2.5.1/squash_nonstd-stat.c ruby/squash_nonstd-stat.c
 +	return 0;
 +}
 +
-diff -ruN ruby-2.5.1/squash_private.c ruby/squash_private.c
---- ruby-2.5.1/squash_private.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_private.c ruby/squash_private.c
+--- ruby-2.6.0/squash_private.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_private.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,47 @@
 +/*
@@ -9822,7 +9822,7 @@ diff -ruN ruby-2.5.1/squash_private.c ruby/squash_private.c
 +	st->st_mode = inode->base.mode;
 +	st->st_nlink = inode->nlink;
 +	st->st_mtime = st->st_ctime = st->st_atime = inode->base.mtime;
-+	
++
 +	if (S_ISREG(st->st_mode)) {
 +		/* FIXME: do symlinks, dirs, etc have a size? */
 +		st->st_size = inode->xtra.reg.file_size;
@@ -9832,11 +9832,11 @@ diff -ruN ruby-2.5.1/squash_private.c ruby/squash_private.c
 +	} else if (S_ISLNK(st->st_mode)) {
 +		st->st_size = inode->xtra.symlink_size;
 +	}
-+	
++
 +	return SQFS_OK;
 +}
-diff -ruN ruby-2.5.1/squash_readlink.c ruby/squash_readlink.c
---- ruby-2.5.1/squash_readlink.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_readlink.c ruby/squash_readlink.c
+--- ruby-2.6.0/squash_readlink.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_readlink.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,85 @@
 +/*
@@ -9924,8 +9924,8 @@ diff -ruN ruby-2.5.1/squash_readlink.c ruby/squash_readlink.c
 +	}
 +	return -1;
 +}
-diff -ruN ruby-2.5.1/squash_scandir.c ruby/squash_scandir.c
---- ruby-2.5.1/squash_scandir.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_scandir.c ruby/squash_scandir.c
+--- ruby-2.6.0/squash_scandir.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_scandir.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,66 @@
 +/*
@@ -9995,8 +9995,8 @@ diff -ruN ruby-2.5.1/squash_scandir.c ruby/squash_scandir.c
 +
 +}
 \ No newline at end of file
-diff -ruN ruby-2.5.1/squash_stack.c ruby/squash_stack.c
---- ruby-2.5.1/squash_stack.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_stack.c ruby/squash_stack.c
+--- ruby-2.6.0/squash_stack.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_stack.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,130 @@
 +/*
@@ -10032,11 +10032,11 @@ diff -ruN ruby-2.5.1/squash_stack.c ruby/squash_stack.c
 +	char *items;
 +	if (cap <= s->capacity)
 +		return SQFS_OK;
-+	
++
 +	items = realloc(s->items, cap * s->value_size);
 +	if (!items)
 +		return SQFS_ERR;
-+	
++
 +	s->items = items;
 +	s->capacity = cap;
 +	return SQFS_OK;
@@ -10047,10 +10047,10 @@ diff -ruN ruby-2.5.1/squash_stack.c ruby/squash_stack.c
 +#define CAPACITY_RATIO 3 / 2
 +static size_t sqfs_stack_next_capacity(size_t cap) {
 +	size_t n;
-+	
++
 +	if (cap == 0)
 +		return CAPACITY_DEFAULT;
-+	
++
 +	n = cap * CAPACITY_RATIO;
 +	if (n <= cap)
 +		return cap + 1;
@@ -10100,10 +10100,10 @@ diff -ruN ruby-2.5.1/squash_stack.c ruby/squash_stack.c
 +
 +short sqfs_stack_pop(sqfs_stack *s) {
 +	void *v;
-+	
++
 +	if (s->size == 0)
 +		return 0;
-+	
++
 +	sqfs_stack_top(s, &v);
 +	if (s->freer)
 +		s->freer(v);
@@ -10118,7 +10118,7 @@ diff -ruN ruby-2.5.1/squash_stack.c ruby/squash_stack.c
 +sqfs_err sqfs_stack_at(sqfs_stack *s, size_t i, void *vout) {
 +	if (i >= s->size)
 +		return SQFS_ERR;
-+	
++
 +	*(void**)vout = s->items + i * s->value_size;
 +	return SQFS_OK;
 +}
@@ -10126,11 +10126,11 @@ diff -ruN ruby-2.5.1/squash_stack.c ruby/squash_stack.c
 +sqfs_err sqfs_stack_top(sqfs_stack *s, void *vout) {
 +	if (s->size == 0)
 +		return SQFS_ERR;
-+	
++
 +	return sqfs_stack_at(s, s->size - 1, vout);
 +}
-diff -ruN ruby-2.5.1/squash_stat.c ruby/squash_stat.c
---- ruby-2.5.1/squash_stat.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_stat.c ruby/squash_stat.c
+--- ruby-2.6.0/squash_stat.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_stat.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,82 @@
 +/*
@@ -10148,7 +10148,7 @@ diff -ruN ruby-2.5.1/squash_stat.c ruby/squash_stat.c
 +	sqfs_err error;
 +	sqfs_inode node;
 +	short found;
-+	
++
 +	error = sqfs_inode_get(fs, &node, sqfs_inode_root(fs));
 +	if (SQFS_OK != error) {
 +		goto failure;
@@ -10215,8 +10215,8 @@ diff -ruN ruby-2.5.1/squash_stat.c ruby/squash_stat.c
 +	*buf = SQUASH_VFD_FILE(vfd)->st;
 +	return 0;
 +}
-diff -ruN ruby-2.5.1/squash_table.c ruby/squash_table.c
---- ruby-2.5.1/squash_table.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_table.c ruby/squash_table.c
+--- ruby-2.6.0/squash_table.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_table.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,66 @@
 +/*
@@ -10252,10 +10252,10 @@ diff -ruN ruby-2.5.1/squash_table.c ruby/squash_table.c
 +sqfs_err sqfs_table_init(sqfs_table *table, sqfs_fd_t fd, sqfs_off_t start, size_t each,
 +		size_t count) {
 +	//size_t nblocks, bread;
-+	
++
 +	if (count == 0)
 +		return SQFS_OK;
-+	
++
 +	//nblocks = sqfs_divceil(each * count, SQUASHFS_METADATA_SIZE);
 +
 +	//unused
@@ -10263,7 +10263,7 @@ diff -ruN ruby-2.5.1/squash_table.c ruby/squash_table.c
 +
 +	table->each = each;
 +	table->blocks = (uint64_t *)(fd + start);
-+	
++
 +	return SQFS_OK;
 +}
 +
@@ -10276,17 +10276,17 @@ diff -ruN ruby-2.5.1/squash_table.c ruby/squash_table.c
 +	size_t pos = idx * table->each;
 +	size_t bnum = pos / SQUASHFS_METADATA_SIZE,
 +		off = pos % SQUASHFS_METADATA_SIZE;
-+	
++
 +	sqfs_off_t bpos = table->blocks[bnum];
 +	if (sqfs_md_cache(fs, &bpos, &block))
 +		return SQFS_ERR;
-+	
++
 +	memcpy(buf, (char*)(block->data) + off, table->each);
 +	/* BLOCK CACHED, DON'T DISPOSE */
 +	return SQFS_OK;
 +}
-diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
---- ruby-2.5.1/squash_traverse.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_traverse.c ruby/squash_traverse.c
+--- ruby-2.6.0/squash_traverse.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_traverse.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,322 @@
 +/*
@@ -10332,11 +10332,11 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +	   work to do. */
 +	TRAVERSE_DESCEND,		 	/* Descend into the current entry (a dir) */
 +	TRAVERSE_NAME_REMOVE, /* Remove the name from the end of the stored path */
-+	
++
 +	/* End states */
 +	TRAVERSE_ERROR,
 +	TRAVERSE_FINISHED,
-+	
++
 +	/* Internal */
 +	TRAVERSE_ASCEND,			/* Done with a directory, ascend a level */
 +	TRAVERSE_NAME_ADD,		/* Add a name to the end of the stored path */
@@ -10384,22 +10384,22 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +sqfs_err sqfs_traverse_open_inode(sqfs_traverse *trv, sqfs *fs,
 +		sqfs_inode *inode) {
 +	sqfs_err err;
-+	
-+	sqfs_traverse_init(trv);	
++
++	sqfs_traverse_init(trv);
 +	if ((err = sqfs_traverse_path_init(trv)))
 +		goto error;
 +	err = sqfs_stack_create(&trv->stack, sizeof(sqfs_traverse_level), 0, NULL);
 +	if (err)
 +		goto error;
-+	
++
 +	trv->fs = fs;
 +	if ((err = sqfs_traverse_descend_inode(trv, inode)))
 +		goto error;
-+	
++
 +	sqfs_traverse_path_set_name_size(trv, 0); /* The root has no name */
 +	trv->state = TRAVERSE_NAME_REMOVE;
 +	return SQFS_OK;
-+	
++
 +error:
 +	sqfs_traverse_close(trv);
 +	return err;
@@ -10408,10 +10408,10 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +sqfs_err sqfs_traverse_open(sqfs_traverse *trv, sqfs *fs, sqfs_inode_id iid) {
 +	sqfs_err err;
 +	sqfs_inode inode;
-+	
++
 +	if ((err = sqfs_inode_get(fs, &inode, iid)))
 +		return err;
-+	
++
 +	return sqfs_traverse_open_inode(trv, fs, &inode);
 +}
 +
@@ -10425,14 +10425,14 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +short sqfs_traverse_next(sqfs_traverse *trv, sqfs_err *err) {
 +	sqfs_traverse_level *level;
 +	short found;
-+	
++
 +	*err = SQFS_OK;
 +	while (1) {
 +		switch (trv->state) {
 +			case TRAVERSE_GET_ENTRY:
 +				if ((*err = sqfs_stack_top(&trv->stack, &level)))
 +					goto error;
-+				
++
 +				found = sqfs_dir_next(trv->fs, &level->dir, &trv->entry, err);
 +				if (*err)
 +					goto error;
@@ -10441,7 +10441,7 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +				else
 +					trv->state = TRAVERSE_ASCEND;
 +				break;
-+			
++
 +			case TRAVERSE_NAME_ADD:
 +				if ((*err = sqfs_traverse_path_add_name(trv)))
 +					goto error;
@@ -10451,19 +10451,19 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +					trv->state = TRAVERSE_NAME_REMOVE;
 +				trv->dir_end = 0;
 +				return 1;
-+			
++
 +			case TRAVERSE_NAME_REMOVE:
 +				sqfs_traverse_path_remove_name(trv);
 +				trv->state = TRAVERSE_GET_ENTRY;
 +				break;
-+			
++
 +			case TRAVERSE_DESCEND:
 +				*err = sqfs_traverse_descend(trv, sqfs_dentry_inode(&trv->entry));
 +				if (*err)
 +					goto error;
 +				trv->state = TRAVERSE_GET_ENTRY;
 +				break;
-+			
++
 +			case TRAVERSE_ASCEND:
 +				if ((*err = sqfs_traverse_ascend(trv)))
 +					goto error;
@@ -10474,16 +10474,16 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +				}
 +				trv->state = TRAVERSE_FINISHED;
 +				break;
-+			
++
 +			case TRAVERSE_FINISHED:
 +				return 0;
-+			
++
 +			case TRAVERSE_ERROR:
 +				*err = SQFS_ERR;
 +				goto error;
 +		}
 +	}
-+	
++
 +error:
 +	trv->state = TRAVERSE_ERROR;
 +	return 0;
@@ -10516,14 +10516,14 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +		size_t next_cap = trv->path_cap;
 +		while (need > next_cap)
 +			next_cap *= 2;
-+		
++
 +		if (!(next_path = realloc(trv->path, next_cap)))
 +			return SQFS_ERR;
-+		
++
 +		trv->path = next_path;
 +		trv->path_cap = next_cap;
 +	}
-+	
++
 +	memcpy(trv->path + trv->path_size - 1, str, size);
 +	trv->path_size = need;
 +	sqfs_traverse_path_terminate(trv);
@@ -10535,7 +10535,7 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +		trv->path_size -= size;
 +	else
 +		trv->path_size = 1; /* only nul terminator left */
-+	
++
 +	sqfs_traverse_path_terminate(trv);
 +}
 +
@@ -10568,14 +10568,14 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +	sqfs_err err;
 +	sqfs_traverse_level *level;
 +	short initial;
-+	
++
 +	initial = (sqfs_stack_size(&trv->stack) == 0);
-+	
++
 +	if ((err = sqfs_stack_push(&trv->stack, &level)))
-+		return err;	
++		return err;
 +	if ((err = sqfs_dir_open(trv->fs, inode, &level->dir, 0)))
 +		return err;
-+	
++
 +	if (initial) {
 +		/* Don't add the separator or store the size for the root directory */
 +		level->name_size = 0;
@@ -10584,35 +10584,35 @@ diff -ruN ruby-2.5.1/squash_traverse.c ruby/squash_traverse.c
 +		if ((err = sqfs_traverse_path_add_sep(trv)))
 +			return err;
 +	}
-+	
++
 +	return err;
 +}
 +
 +static sqfs_err sqfs_traverse_descend(sqfs_traverse *trv, sqfs_inode_id iid) {
 +	sqfs_err err;
 +	sqfs_inode inode;
-+	
++
 +	if ((err = sqfs_inode_get(trv->fs, &inode, iid)))
 +		return err;
-+	
++
 +	return sqfs_traverse_descend_inode(trv, &inode);
 +}
 +
 +static sqfs_err sqfs_traverse_ascend(sqfs_traverse *trv) {
 +	sqfs_err err;
 +	sqfs_traverse_level *level;
-+	
++
 +	if ((err = sqfs_stack_top(&trv->stack, &level)))
 +		return err;
-+	
++
 +	sqfs_traverse_path_remove_sep(trv); /* safe even if initial */
 +	sqfs_traverse_path_set_name_size(trv, level->name_size);
-+	
++
 +	sqfs_stack_pop(&trv->stack);
 +	return SQFS_OK;
 +}
-diff -ruN ruby-2.5.1/squash_util.c ruby/squash_util.c
---- ruby-2.5.1/squash_util.c	1969-12-31 16:00:00.000000000 -0800
+diff -ruN ruby-2.6.0/squash_util.c ruby/squash_util.c
+--- ruby-2.6.0/squash_util.c	1969-12-31 16:00:00.000000000 -0800
 +++ ruby/squash_util.c	2018-05-01 18:33:44.000000000 -0700
 @@ -0,0 +1,84 @@
 +/*
@@ -10699,8 +10699,8 @@ diff -ruN ruby-2.5.1/squash_util.c ruby/squash_util.c
 +	return err;
 +}
 +
-diff -ruN ruby-2.5.1/tool/mkconfig.rb ruby/tool/mkconfig.rb
---- ruby-2.5.1/tool/mkconfig.rb	2018-05-04 10:55:18.000000000 -0700
+diff -ruN ruby-2.6.0/tool/mkconfig.rb ruby/tool/mkconfig.rb
+--- ruby-2.6.0/tool/mkconfig.rb	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/tool/mkconfig.rb	2018-05-01 18:33:44.000000000 -0700
 @@ -124,6 +124,22 @@
        val = '"$(SDKROOT)"'+val if /darwin/ =~ arch
@@ -10725,13 +10725,13 @@ diff -ruN ruby-2.5.1/tool/mkconfig.rb ruby/tool/mkconfig.rb
      if fast[name]
        v_fast << v
      else
-diff -ruN ruby-2.5.1/util.c ruby/util.c
---- ruby-2.5.1/util.c	2018-05-04 10:55:15.000000000 -0700
+diff -ruN ruby-2.6.0/util.c ruby/util.c
+--- ruby-2.6.0/util.c	2018-05-04 10:55:15.000000000 -0700
 +++ ruby/util.c	2018-05-01 18:33:44.000000000 -0700
 @@ -30,6 +30,10 @@
  const char ruby_hexdigits[] = "0123456789abcdef0123456789ABCDEF";
  #define hexdigit ruby_hexdigits
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +#include "enclose_io.h"
 +// --------- [Enclose.io Hack end] ---------
@@ -10739,9 +10739,9 @@ diff -ruN ruby-2.5.1/util.c ruby/util.c
  unsigned long
  ruby_scan_oct(const char *start, size_t len, size_t *retlen)
  {
-Binary files ruby-2.5.1/vendor/bundler-1.16.1.gem and ruby/vendor/bundler-1.16.1.gem differ
-diff -ruN ruby-2.5.1/win32/Makefile.sub ruby/win32/Makefile.sub
---- ruby-2.5.1/win32/Makefile.sub	2018-05-04 10:55:18.000000000 -0700
+Binary files ruby-2.6.0/vendor/bundler-1.16.1.gem and ruby/vendor/bundler-1.16.1.gem differ
+diff -ruN ruby-2.6.0/win32/Makefile.sub ruby/win32/Makefile.sub
+--- ruby-2.6.0/win32/Makefile.sub	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/win32/Makefile.sub	2018-05-01 18:33:44.000000000 -0700
 @@ -250,7 +250,7 @@
  EXTSOLIBS =
@@ -10766,7 +10766,7 @@ diff -ruN ruby-2.5.1/win32/Makefile.sub ruby/win32/Makefile.sub
 @@ -990,10 +992,42 @@
  miniruby.rc:
  		@exit > $@
- 
+
 +ruby_static.exe:	$(MAINOBJ) $(LIBRUBY_SO) $(RUBY_INSTALL_NAME).res
 +		$(ECHO) linking $(@:\=/)
 +		$(Q) $(PURIFY) $(CC) $(CFLAGS) $(MAINOBJ) $(RUBY_INSTALL_NAME).res \
@@ -10825,13 +10825,13 @@ diff -ruN ruby-2.5.1/win32/Makefile.sub ruby/win32/Makefile.sub
  			$(OUTFLAG)$@ $(LIBRUBYARG) -link $(LDFLAGS) $(XLDFLAGS)
  		$(Q) $(LDSHARED_0)
  		$(Q) $(LDSHARED_1)
-diff -ruN ruby-2.5.1/win32/file.c ruby/win32/file.c
---- ruby-2.5.1/win32/file.c	2018-05-04 10:55:18.000000000 -0700
+diff -ruN ruby-2.6.0/win32/file.c ruby/win32/file.c
+--- ruby-2.6.0/win32/file.c	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/win32/file.c	2018-05-01 18:33:44.000000000 -0700
 @@ -10,6 +10,10 @@
  #include <shlwapi.h>
  #include "win32/file.h"
- 
+
 +// --------- [Enclose.io Hack start] ---------
 +#include "enclose_io.h"
 +// --------- [Enclose.io Hack end] ---------
@@ -10839,8 +10839,8 @@ diff -ruN ruby-2.5.1/win32/file.c ruby/win32/file.c
  #ifndef INVALID_FILE_ATTRIBUTES
  # define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
  #endif
-diff -ruN ruby-2.5.1/win32/win32.c ruby/win32/win32.c
---- ruby-2.5.1/win32/win32.c	2018-05-04 10:55:18.000000000 -0700
+diff -ruN ruby-2.6.0/win32/win32.c ruby/win32/win32.c
+--- ruby-2.6.0/win32/win32.c	2018-05-04 10:55:18.000000000 -0700
 +++ ruby/win32/win32.c	2018-05-01 18:33:44.000000000 -0700
 @@ -55,6 +55,11 @@
  #include "id.h"
@@ -10852,7 +10852,7 @@ diff -ruN ruby-2.5.1/win32/win32.c ruby/win32/win32.c
 +// --------- [Enclose.io Hack end] ---------
 +
  #define isdirsep(x) ((x) == '/' || (x) == '\\')
- 
+
  #if defined _MSC_VER && _MSC_VER <= 1200
 @@ -849,6 +854,11 @@
  void
@@ -10865,11 +10865,11 @@ diff -ruN ruby-2.5.1/win32/win32.c ruby/win32/win32.c
 +
  #if RUBY_MSVCRT_VERSION >= 80
      static void set_pioinfo_extra(void);
- 
+
 @@ -866,6 +876,28 @@
      //
      *argc = w32_cmdvector(GetCommandLineW(), argv, CP_UTF8, &OnigEncodingUTF_8);
- 
+
 +    // --------- [Enclose.io Hack start] ---------
 +    #ifdef ENCLOSE_IO_ENTRANCE
 +    new_argc = *argc;
@@ -10903,12 +10903,12 @@ diff -ruN ruby-2.5.1/win32/win32.c ruby/win32/win32.c
 +	    curr->str[curr->len] = '\0';
 +	}
  	curr->flags |= NTMALLOC;
- 
+
  	if (globbing && (tail = cmdglob(curr, cmdtail, cp, enc))) {
 @@ -6980,6 +7015,11 @@
  	return -1;
      }
- 
+
 +    if (SQUASH_VALID_VFD(fd)) {
 +	// TODO how about Binary Mode File I/O?
 +	return _read(fd, buf, size);

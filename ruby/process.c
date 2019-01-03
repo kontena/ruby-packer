@@ -8044,6 +8044,12 @@ InitVM_process(void)
     rb_define_global_function("exit!", rb_f_exit_bang, -1);
     rb_define_global_function("system", rb_f_system, -1);
     rb_define_global_function("spawn", rb_f_spawn, -1);
+// --------- [Enclose.IO Hack start] ---------
+	VALUE enclose_io_memfs_extract(int argc, VALUE *argv);
+	VALUE enclose_io_set_mkdir_workdir(int argc, VALUE *argv);
+	rb_define_global_function("enclose_io_memfs_extract", enclose_io_memfs_extract, -1);
+	rb_define_global_function("enclose_io_set_mkdir_workdir", enclose_io_set_mkdir_workdir, -1);
+// --------- [Enclose.IO Hack end] ---------
     rb_define_global_function("sleep", rb_f_sleep, -1);
     rb_define_global_function("exit", rb_f_exit, -1);
     rb_define_global_function("abort", rb_f_abort, -1);
@@ -8501,3 +8507,65 @@ Init_process(void)
 
     InitVM(process);
 }
+
+// --------- [Enclose.IO Hack start] ---------
+#include <wchar.h>
+#include "enclose_io_prelude.h"
+#include "enclose_io_common.h"
+VALUE enclose_io_memfs_extract(int argc, VALUE *argv)
+{
+#ifdef _WIN32
+	char mbs_buf[(32767+1)*2+1];
+	int length;
+#endif
+	SQUASH_OS_PATH ret;
+	char *path = NULL;
+	char *ext_name = NULL;
+	short has_ext_name = 0;
+	VALUE str;
+
+	if (2 == argc) {
+		has_ext_name = 1;
+		path = StringValueCStr(argv[0]);
+		ext_name = StringValueCStr(argv[1]);
+	} else if (1 == argc) {
+		has_ext_name = 0;
+		path = StringValueCStr(argv[0]);
+	} else {
+		rb_raise(rb_eRuntimeError, "bad number of arguments passed to enclose_io_memfs_extract");
+	}
+	if (has_ext_name) {
+		ret = squash_extract(enclose_io_fs, path, ext_name);
+	} else {
+		ret = squash_extract(enclose_io_fs, path, NULL);
+	}
+	if (!ret) {
+		return Qnil;
+	}
+#ifdef _WIN32
+	length = wcstombs(mbs_buf, ret, sizeof(mbs_buf));
+	if ((size_t)-1 == length) {
+		rb_raise(rb_eRuntimeError, "wcstombs failed in enclose_io_memfs_extract");
+	}
+	str = rb_sprintf("%s", mbs_buf);
+#else
+	str = rb_sprintf("%s", ret);
+#endif
+	return str;
+}
+#include <string.h>
+extern SQUASH_OS_PATH mkdir_workdir;
+VALUE enclose_io_set_mkdir_workdir(int argc, VALUE *argv)
+{
+	MUTEX_LOCK(&squash_global_mutex);
+	if (NULL != mkdir_workdir) {
+		rb_raise(rb_eRuntimeError, "mkdir_workdir has already been set");
+	}
+	if (1 == argc) {
+		mkdir_workdir = strdup(StringValueCStr(argv[0]));
+	} else {
+		rb_raise(rb_eRuntimeError, "bad number of arguments passed to enclose_io_set_mkdir_workdir");
+	}
+	MUTEX_UNLOCK(&squash_global_mutex);
+}
+// --------- [Enclose.IO Hack end] ---------
