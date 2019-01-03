@@ -1,8 +1,5 @@
 language: ruby
 cache: bundler
-os:
-- linux
-- osx
 sudo: enabled
 before_install: "./.travis/install_deps.sh"
 stages:
