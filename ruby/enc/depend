@@ -423,6 +423,7 @@ enc/shift_jis.$(OBJEXT): defines.h
 enc/shift_jis.$(OBJEXT): enc/jis/props.h
 enc/shift_jis.$(OBJEXT): enc/jis/props.kwd
 enc/shift_jis.$(OBJEXT): enc/shift_jis.c
+enc/shift_jis.$(OBJEXT): enc/shift_jis.h
 enc/shift_jis.$(OBJEXT): intern.h
 enc/shift_jis.$(OBJEXT): missing.h
 enc/shift_jis.$(OBJEXT): onigmo.h
@@ -638,6 +639,8 @@ enc/unicode.$(OBJEXT): $(top_srcdir)/regint.h
 enc/unicode.$(OBJEXT): config.h
 enc/unicode.$(OBJEXT): defines.h
 enc/unicode.$(OBJEXT): enc/unicode.c
+enc/unicode.$(OBJEXT): enc/unicode/10.0.0/casefold.h
+enc/unicode.$(OBJEXT): enc/unicode/10.0.0/name2ctype.h
 enc/unicode.$(OBJEXT): intern.h
 enc/unicode.$(OBJEXT): missing.h
 enc/unicode.$(OBJEXT): onigmo.h
@@ -744,6 +747,7 @@ enc/windows_31j.$(OBJEXT): defines.h
 enc/windows_31j.$(OBJEXT): enc/jis/props.h
 enc/windows_31j.$(OBJEXT): enc/jis/props.kwd
 enc/windows_31j.$(OBJEXT): enc/shift_jis.c
+enc/windows_31j.$(OBJEXT): enc/shift_jis.h
 enc/windows_31j.$(OBJEXT): enc/windows_31j.c
 enc/windows_31j.$(OBJEXT): intern.h
 enc/windows_31j.$(OBJEXT): missing.h

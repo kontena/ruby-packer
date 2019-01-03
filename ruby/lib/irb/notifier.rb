@@ -2,7 +2,7 @@
 #
 #   notifier.rb - output methods used by irb
 #   	$Release Version: 0.9.6$
-#   	$Revision: 56371 $
+#   	$Revision: 65506 $
 #   	by Keiju ISHITSUKA(keiju@ruby-lang.org)
 #
 # --
@@ -11,7 +11,7 @@
 #
 
 require "e2mmap"
-require "irb/output-method"
+require_relative "output-method"
 
 module IRB
   # An output formatter used internally by the lexer.

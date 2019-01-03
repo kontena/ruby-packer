@@ -1,4 +1,4 @@
-require File.expand_path('../spec_helper', __FILE__)
+require_relative 'spec_helper'
 
 load_extension("typed_data")
 
@@ -27,11 +27,6 @@ describe "CApiWrappedTypedStruct" do
   it "unwraps data for a parent type" do
     a = @s.typed_wrap_struct(1024)
     @s.typed_get_struct_parent(a).should == 1024
-  end
-
-  it "allows for using NULL as the klass for Data_Wrap_Struct" do
-    a = @s.typed_wrap_struct_null(1024)
-    @s.typed_get_struct(a).should == 1024
   end
 
   describe "RTYPEDATA" do

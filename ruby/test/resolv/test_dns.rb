@@ -3,6 +3,7 @@ require 'test/unit'
 require 'resolv'
 require 'socket'
 require 'tempfile'
+require 'minitest/mock'
 
 class TestResolvDNS < Test::Unit::TestCase
   def setup
@@ -158,7 +159,7 @@ class TestResolvDNS < Test::Unit::TestCase
     u.bind("127.0.0.1", 0)
     _, port, _, host = u.addr
     u.close
-    # A rase condition here.
+    # A race condition here.
     # Another program may use the port.
     # But no way to prevent it.
     Timeout.timeout(5) do
@@ -211,8 +212,8 @@ class TestResolvDNS < Test::Unit::TestCase
 
   def test_ipv6_create
     ref = '[Bug #11910] [ruby-core:72559]'
-    assert_instance_of Resolv::IPv6, Resolv::IPv6.create('::1')
-    assert_instance_of Resolv::IPv6, Resolv::IPv6.create('::1:127.0.0.1')
+    assert_instance_of Resolv::IPv6, Resolv::IPv6.create('::1'), ref
+    assert_instance_of Resolv::IPv6, Resolv::IPv6.create('::1:127.0.0.1'), ref
   end
 
   def test_ipv6_should_be_16
@@ -245,5 +246,23 @@ class TestResolvDNS < Test::Unit::TestCase
       }
     }
     assert_operator(2**14, :<, m.to_s.length)
+  end
+
+  def assert_no_fd_leak
+    socket = assert_throw(self) do |tag|
+      Resolv::DNS.stub(:bind_random_port, ->(s, *) {throw(tag, s)}) do
+        yield.getname("8.8.8.8")
+      end
+    end
+
+    assert_predicate(socket, :closed?, "file descriptor leaked")
+  end
+
+  def test_no_fd_leak_connected
+    assert_no_fd_leak {Resolv::DNS.new(nameserver_port: [['127.0.0.1', 53]])}
+  end
+
+  def test_no_fd_leak_unconnected
+    assert_no_fd_leak {Resolv::DNS.new}
   end
 end

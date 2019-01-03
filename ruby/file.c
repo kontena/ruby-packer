@@ -2,7 +2,7 @@
 
   file.c -
 
-  $Author: naruse $
+  $Author: mame $
   created at: Mon Nov 15 12:24:34 JST 1993
 
   Copyright (C) 1993-2007 Yukihiro Matsumoto
@@ -24,10 +24,11 @@
 #endif
 
 #include "id.h"
-#include "internal.h"
+#include "ruby/encoding.h"
 #include "ruby/io.h"
 #include "ruby/util.h"
 #include "ruby/thread.h"
+#include "internal.h"
 #include "dln.h"
 #include "encindex.h"
 
@@ -87,10 +88,6 @@ int flock(int, int);
 #if !defined HAVE_LSTAT && !defined lstat
 #define lstat stat
 #endif
-
-// --------- [Enclose.io Hack start] ---------
-#include "enclose_io.h"
-// --------- [Enclose.io Hack end] ---------
 
 /* define system APIs */
 #ifdef _WIN32
@@ -364,7 +361,7 @@ struct apply_arg {
     int errnum;
     int (*func)(const char *, void *);
     void *arg;
-    struct apply_filename fn[1]; /* flexible array */
+    struct apply_filename fn[FLEX_ARY_LEN];
 };
 
 static void *
@@ -575,7 +572,7 @@ static VALUE
 rb_stat_dev_major(VALUE self)
 {
 #if defined(major)
-    return DEVT2NUM(major(get_stat(self)->st_dev));
+    return UINT2NUM(major(get_stat(self)->st_dev));
 #else
     return Qnil;
 #endif
@@ -596,7 +593,7 @@ static VALUE
 rb_stat_dev_minor(VALUE self)
 {
 #if defined(minor)
-    return DEVT2NUM(minor(get_stat(self)->st_dev));
+    return UINT2NUM(minor(get_stat(self)->st_dev));
 #else
     return Qnil;
 #endif
@@ -734,7 +731,7 @@ static VALUE
 rb_stat_rdev_major(VALUE self)
 {
 #if defined(HAVE_STRUCT_STAT_ST_RDEV) && defined(major)
-    return DEVT2NUM(major(get_stat(self)->st_rdev));
+    return UINT2NUM(major(get_stat(self)->st_rdev));
 #else
     return Qnil;
 #endif
@@ -755,7 +752,7 @@ static VALUE
 rb_stat_rdev_minor(VALUE self)
 {
 #if defined(HAVE_STRUCT_STAT_ST_RDEV) && defined(minor)
-    return DEVT2NUM(minor(get_stat(self)->st_rdev));
+    return UINT2NUM(minor(get_stat(self)->st_rdev));
 #else
     return Qnil;
 #endif
@@ -1951,6 +1948,8 @@ check3rdbyte(VALUE fname, int mode)
  *   File.setuid?(file_name)   ->  true or false
  *
  * Returns <code>true</code> if the named file has the setuid bit set.
+ *
+ * _file_name_ can be an IO object.
  */
 
 static VALUE
@@ -1968,6 +1967,8 @@ rb_file_suid_p(VALUE obj, VALUE fname)
  *   File.setgid?(file_name)   ->  true or false
  *
  * Returns <code>true</code> if the named file has the setgid bit set.
+ *
+ * _file_name_ can be an IO object.
  */
 
 static VALUE
@@ -1985,6 +1986,8 @@ rb_file_sgid_p(VALUE obj, VALUE fname)
  *   File.sticky?(file_name)   ->  true or false
  *
  * Returns <code>true</code> if the named file has the sticky bit set.
+ *
+ * _file_name_ can be an IO object.
  */
 
 static VALUE
@@ -2410,12 +2413,12 @@ static VALUE
 rb_file_chmod(VALUE obj, VALUE vmode)
 {
     rb_io_t *fptr;
-    int mode;
+    mode_t mode;
 #if !defined HAVE_FCHMOD || !HAVE_FCHMOD
     VALUE path;
 #endif
 
-    mode = NUM2INT(vmode);
+    mode = NUM2MODET(vmode);
 
     GetOpenFile(obj, fptr);
 #ifdef HAVE_FCHMOD
@@ -2500,7 +2503,7 @@ chown_internal(const char *path, void *arg)
 
 /*
  *  call-seq:
- *     File.chown(owner_int, group_int, file_name,... )  ->  integer
+ *     File.chown(owner_int, group_int, file_name, ...)  ->  integer
  *
  *  Changes the owner and group of the named file(s) to the given
  *  numeric owner and group id's. Only a process with superuser
@@ -2754,7 +2757,7 @@ utime_internal_i(int argc, VALUE *argv, int follow)
 
 /*
  * call-seq:
- *  File.utime(atime, mtime, file_name,...)   ->  integer
+ *  File.utime(atime, mtime, file_name, ...)   ->  integer
  *
  * Sets the access and modification times of each named file to the
  * first two arguments. If a file is a symlink, this method acts upon
@@ -2773,7 +2776,7 @@ rb_file_s_utime(int argc, VALUE *argv)
 
 /*
  * call-seq:
- *  File.lutime(atime, mtime, file_name,...)   ->  integer
+ *  File.lutime(atime, mtime, file_name, ...)   ->  integer
  *
  * Sets the access and modification times of each named file to the
  * first two arguments. If a file is a symlink, this method acts upon
@@ -5834,7 +5837,7 @@ rb_file_s_mkfifo(int argc, VALUE *argv)
 #define rb_file_s_mkfifo rb_f_notimplement
 #endif
 
-VALUE rb_mFConst;
+static VALUE rb_mFConst;
 
 void
 rb_file_const(const char *name, VALUE value)
@@ -5962,7 +5965,7 @@ ruby_is_fd_loadable(int fd)
     if (S_ISREG(st.st_mode))
 	return 1;
 
-    if (S_ISFIFO(st.st_mode))
+    if (S_ISFIFO(st.st_mode) || S_ISCHR(st.st_mode))
 	return -1;
 
     if (S_ISDIR(st.st_mode))
@@ -6158,7 +6161,7 @@ define_filetest_function(const char *name, VALUE (*func)(ANYARGS), int argc)
     rb_define_singleton_method(rb_cFile, name, func, argc);
 }
 
-static const char null_device[] =
+const char ruby_null_device[] =
 #if defined DOSISH
     "NUL"
 #elif defined AMIGA || defined __amigaos__
@@ -6279,9 +6282,10 @@ Init_File(void)
     rb_define_singleton_method(rb_cFile, "extname", rb_file_s_extname, 1);
     rb_define_singleton_method(rb_cFile, "path", rb_file_s_path, 1);
 
-    separator = rb_fstring_cstr("/");
+    separator = rb_fstring_lit("/");
     /* separates directory parts in path */
     rb_define_const(rb_cFile, "Separator", separator);
+    /* separates directory parts in path */
     rb_define_const(rb_cFile, "SEPARATOR", separator);
     rb_define_singleton_method(rb_cFile, "split",  rb_file_s_split, 1);
     rb_define_singleton_method(rb_cFile, "join",   rb_file_s_join, -2);
@@ -6400,7 +6404,7 @@ Init_File(void)
     rb_define_const(rb_mFConst, "LOCK_NB", INT2FIX(LOCK_NB));
 
     /* Name of the null device */
-    rb_define_const(rb_mFConst, "NULL", rb_fstring_cstr(null_device));
+    rb_define_const(rb_mFConst, "NULL", rb_fstring_cstr(ruby_null_device));
 
     rb_define_method(rb_cFile, "path",  rb_file_path, 0);
     rb_define_method(rb_cFile, "to_path",  rb_file_path, 0);

@@ -2,7 +2,7 @@
 #
 #   help.rb - helper using ri
 #   	$Release Version: 0.9.6$
-#   	$Revision: 56371 $
+#   	$Revision: 65506 $
 #
 # --
 #
@@ -11,7 +11,7 @@
 
 require 'rdoc/ri/driver'
 
-require "irb/cmd/nop.rb"
+require_relative "nop"
 
 # :stopdoc:
 module IRB

@@ -18,7 +18,6 @@ fsl   = { frozen_string_literal: true } # used later
 tests = [
   # insn ,   expression to generate such insn
   [ 'nop',   %q{ raise rescue true }, ],
-  [ 'trace', %q{ true }, ],
 
   [ 'setlocal *, 0', %q{ x = true }, ],
   [ 'setlocal *, 1', %q{ x = nil; -> { x = true }.call }, ],
@@ -26,6 +25,27 @@ tests = [
   [ 'getlocal *, 0', %q{ x = true; x }, ],
   [ 'getlocal *, 1', %q{ x = true; -> { x }.call }, ],
   [ 'getlocal',      %q{ x = true; -> { -> { x }.() }.() }, ],
+
+  [ 'setblockparam', <<~'},', ], # {
+    def m&b
+      b = # here
+        proc { true }
+    end
+    m { false }.call
+  },
+  [ 'getblockparam', <<~'},', ], # {
+    def m&b
+      b # here
+    end
+    m { true }.call
+  },
+  [ 'getblockparamproxy', <<~'},', ], # {
+    def m&b
+      b # here
+        .call
+    end
+    m { true }
+  },
 
   [ 'setspecial', %q{ true if true..true }, ],
   [ 'getspecial', %q{ $&.nil? }, ],
@@ -67,9 +87,10 @@ tests = [
   [ 'putiseq',                  %q{ -> { true }.() }, ],
   [ 'putstring',                %q{ "true" }, ],
   [ 'tostring / concatstrings', %q{ "#{true}" }, ],
-  [ 'freezestring',             %q{ "#{true}"}, fsl, ],
-  [ 'freezestring',             %q{ "#{true}"}, '-d', fsl, ],
+  [ 'freezestring',             %q{ "#{true}" }, fsl, ],
+  [ 'freezestring',             %q{ "#{true}" }, '-d', fsl, ],
   [ 'toregexp',                 %q{ /#{true}/ =~ "true" && $~ }, ],
+  [ 'intern',                   %q{ :"#{true}" }, ],
 
   [ 'newarray',    %q{ ["true"][0] }, ],
   [ 'duparray',    %q{ [ true ][0] }, ],
@@ -91,12 +112,12 @@ tests = [
 
   [ 'newhash',  %q{ x = {}; x[x] = true }, ],
   [ 'newhash',  %q{ x = true; { x => x }[x] }, ],
+  [ 'newhashfromarray', %q{ { a: true }[:a] }, ],
   [ 'newrange', %q{ x = 1; [*(0..x)][0] == 0 }, ],
   [ 'newrange', %q{ x = 1; [*(0...x)][0] == 0 }, ],
 
   [ 'pop',     %q{ def x; true; end; x }, ],
   [ 'dup',     %q{ x = y = true; x }, ],
-  [ 'dupn',    %q{ Object::X ||= true }, ],
   [ 'dupn',    %q{ Object::X ||= true }, ],
   [ 'reverse', %q{ q, (w, e), r = 1, [2, 3], 4; e == 3 }, ],
   [ 'swap',    <<~'},', ],      # {
@@ -113,6 +134,7 @@ tests = [
 
   [ 'defined',      %q{ !defined?(x) }, ],
   [ 'checkkeyword', %q{ def x x:rand;x end; x x: true }, ],
+  [ 'checktype',    %q{ x = true; "#{x}" }, ],
   [ 'checkmatch',   <<~'},', ], # {
     x = y = true
     case x
@@ -384,6 +406,15 @@ tests = [
     class String; def =~ other; true; end; end
     'true' =~ /true/
   },
+
+  [ 'opt_call_c_function', 'Struct.new(:x).new.x = true', ],
 ]
 
+# normal path
 tests.compact.each {|(insn, expr, *a)| assert_equal 'true', expr, insn, *a }
+
+# with trace
+tests.compact.each {|(insn, expr, *a)|
+  progn = "set_trace_func(proc{})\n" + expr
+  assert_equal 'true', progn, insn, *a
+}

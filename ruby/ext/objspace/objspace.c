@@ -2,7 +2,7 @@
 
   objspace.c - ObjectSpace extender for MRI.
 
-  $Author: mame $
+  $Author: ko1 $
   created at: Wed Jun 17 07:39:17 2009
 
   NOTE: This extension library is only expected to exist with C Ruby.
@@ -12,9 +12,9 @@
 
 **********************************************************************/
 
+#include <ruby/io.h>
 #include "internal.h"
 #include <ruby/st.h>
-#include <ruby/io.h>
 #include <ruby/re.h>
 #include "node.h"
 #include "gc.h"
@@ -382,6 +382,7 @@ count_nodes(int argc, VALUE *argv, VALUE os)
 		COUNT_NODE(NODE_UNTIL);
 		COUNT_NODE(NODE_ITER);
 		COUNT_NODE(NODE_FOR);
+		COUNT_NODE(NODE_FOR_MASGN);
 		COUNT_NODE(NODE_BREAK);
 		COUNT_NODE(NODE_NEXT);
 		COUNT_NODE(NODE_REDO);
@@ -436,6 +437,7 @@ count_nodes(int argc, VALUE *argv, VALUE os)
 		COUNT_NODE(NODE_DXSTR);
 		COUNT_NODE(NODE_EVSTR);
 		COUNT_NODE(NODE_DREGX);
+		COUNT_NODE(NODE_ONCE);
 		COUNT_NODE(NODE_ARGS);
 		COUNT_NODE(NODE_ARGS_AUX);
 		COUNT_NODE(NODE_OPT_ARG);
@@ -468,7 +470,6 @@ count_nodes(int argc, VALUE *argv, VALUE os)
 		COUNT_NODE(NODE_POSTEXE);
 		COUNT_NODE(NODE_DSYM);
 		COUNT_NODE(NODE_ATTRASGN);
-		COUNT_NODE(NODE_PRELUDE);
 		COUNT_NODE(NODE_LAMBDA);
 #undef COUNT_NODE
 	      case NODE_LAST: break;
@@ -624,7 +625,7 @@ count_imemo_objects(int argc, VALUE *argv, VALUE self)
 	imemo_type_ids[5] = rb_intern("imemo_memo");
 	imemo_type_ids[6] = rb_intern("imemo_ment");
 	imemo_type_ids[7] = rb_intern("imemo_iseq");
-	imemo_type_ids[8] = rb_intern("imemo_alloc");
+	imemo_type_ids[8] = rb_intern("imemo_tmpbuf");
 	imemo_type_ids[9] = rb_intern("imemo_parser_strterm");
     }
 
@@ -823,7 +824,7 @@ static int
 collect_values_of_values(VALUE category, VALUE category_objects, VALUE categories)
 {
     VALUE ary = rb_ary_new();
-    st_foreach(rb_hash_tbl(category_objects), collect_values, ary);
+    rb_hash_foreach(category_objects, collect_values, ary);
     rb_hash_aset(categories, category, ary);
     return ST_CONTINUE;
 }
@@ -935,6 +936,7 @@ void Init_objspace_dump(VALUE rb_mObjSpace);
 void
 Init_objspace(void)
 {
+#undef rb_intern
     VALUE rb_mObjSpace;
 #if 0
     rb_mObjSpace = rb_define_module("ObjectSpace"); /* let rdoc know */

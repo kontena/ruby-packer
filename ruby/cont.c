@@ -2,7 +2,7 @@
 
   cont.c -
 
-  $Author: normal $
+  $Author: samuel $
   created at: Thu May 23 09:03:43 2007
 
   Copyright (C) 2007 Koichi Sasada
@@ -13,6 +13,7 @@
 #include "vm_core.h"
 #include "gc.h"
 #include "eval_intern.h"
+#include "mjit.h"
 
 /* FIBER_USE_NATIVE enables Fiber performance improvement using system
  * dependent method such as make/setcontext on POSIX system or
@@ -24,6 +25,27 @@
  * Details is reported in the paper "A Fast Fiber Implementation for Ruby 1.9"
  * in Proc. of 51th Programming Symposium, pp.21--28 (2010) (in Japanese).
  */
+
+/*
+  Enable FIBER_USE_COROUTINE to make fiber yield/resume much faster by using native assembly implementations.
+
+  rvm install ruby-head-ioquatix-native-fiber --url https://github.com/ioquatix/ruby --branch native-fiber
+
+  # Without libcoro
+  koyoko% ./build/bin/ruby ./fiber_benchmark.rb 10000 1000
+  setup time for 10000 fibers:   0.099961
+  execution time for 1000 messages:  19.505909
+
+  # With libcoro
+  koyoko% ./build/bin/ruby ./fiber_benchmark.rb 10000 1000
+  setup time for 10000 fibers:   0.099268
+  execution time for 1000 messages:   8.491746
+*/
+
+#ifdef FIBER_USE_COROUTINE
+#include FIBER_USE_COROUTINE
+#define FIBER_USE_NATIVE 1
+#endif
 
 #if !defined(FIBER_USE_NATIVE)
 # if defined(HAVE_GETCONTEXT) && defined(HAVE_SETCONTEXT)
@@ -76,8 +98,7 @@ static long pagesize;
 
 enum context_type {
     CONTINUATION_CONTEXT = 0,
-    FIBER_CONTEXT = 1,
-    ROOT_FIBER_CONTEXT = 2
+    FIBER_CONTEXT = 1
 };
 
 struct cont_saved_vm_stack {
@@ -109,7 +130,8 @@ typedef struct rb_context_struct {
     rb_execution_context_t saved_ec;
     rb_jmpbuf_t jmpbuf;
     rb_ensure_entry_t *ensure_array;
-    rb_ensure_list_t *ensure_list;
+    /* Pointer to MJIT info about the continuation.  */
+    struct mjit_cont *mjit_cont;
 } rb_context_t;
 
 
@@ -138,32 +160,46 @@ enum fiber_status {
 #define FIBER_TERMINATED_P(fib) ((fib)->status == FIBER_TERMINATED)
 #define FIBER_RUNNABLE_P(fib)   (FIBER_CREATED_P(fib) || FIBER_SUSPENDED_P(fib))
 
-#if FIBER_USE_NATIVE && !defined(_WIN32)
-#define MAX_MACHINE_STACK_CACHE  10
-static int machine_stack_cache_index = 0;
-typedef struct machine_stack_cache_struct {
-    void *ptr;
-    size_t size;
-} machine_stack_cache_t;
-static machine_stack_cache_t machine_stack_cache[MAX_MACHINE_STACK_CACHE];
-static machine_stack_cache_t terminated_machine_stack;
+#if FIBER_USE_NATIVE && !defined(FIBER_USE_COROUTINE) && !defined(_WIN32)
+static inline int
+fiber_context_create(ucontext_t *context, void (*func)(), void *arg, void *ptr, size_t size)
+{
+    if (getcontext(context) < 0) return -1;
+    /*
+     * getcontext() may fail by some reasons:
+     *   1. SELinux policy banned one of "rt_sigprocmask",
+     *      "sigprocmask" or "swapcontext";
+     *   2. libseccomp (aka. syscall filter) banned one of them.
+     */
+    context->uc_link = NULL;
+    context->uc_stack.ss_sp = ptr;
+    context->uc_stack.ss_size = size;
+    makecontext(context, func, 0);
+    return 0;
+}
 #endif
 
 struct rb_fiber_struct {
     rb_context_t cont;
     VALUE first_proc;
     struct rb_fiber_struct *prev;
-    const enum fiber_status status;
+    BITFIELD(enum fiber_status, status, 2);
     /* If a fiber invokes "transfer",
      * then this fiber can't "resume" any more after that.
      * You shouldn't mix "transfer" and "resume".
      */
-    int transferred;
+    unsigned int transferred : 1;
 
 #if FIBER_USE_NATIVE
-#ifdef _WIN32
+#if defined(FIBER_USE_COROUTINE)
+#define FIBER_ALLOCATE_STACK
+    coroutine_context context;
+    void *ss_sp;
+    size_t ss_size;
+#elif defined(_WIN32)
     void *fib_handle;
 #else
+#define FIBER_ALLOCATE_STACK
     ucontext_t context;
     /* Because context.uc_stack.ss_sp and context.uc_stack.ss_size
      * are not necessarily valid after makecontext() or swapcontext(),
@@ -174,6 +210,17 @@ struct rb_fiber_struct {
 #endif
 #endif
 };
+
+#ifdef FIBER_ALLOCATE_STACK
+#define MAX_MACHINE_STACK_CACHE  10
+static int machine_stack_cache_index = 0;
+typedef struct machine_stack_cache_struct {
+    void *ptr;
+    size_t size;
+} machine_stack_cache_t;
+static machine_stack_cache_t machine_stack_cache[MAX_MACHINE_STACK_CACHE];
+static machine_stack_cache_t terminated_machine_stack;
+#endif
 
 static const char *
 fiber_status_name(enum fiber_status s)
@@ -220,27 +267,37 @@ rb_ec_verify(const rb_execution_context_t *ec)
 #endif
 
 static void
-fiber_status_set(const rb_fiber_t *fib, enum fiber_status s)
+fiber_status_set(rb_fiber_t *fib, enum fiber_status s)
 {
-    if (0) fprintf(stderr, "fib: %p, status: %s -> %s\n", fib, fiber_status_name(fib->status), fiber_status_name(s));
+    if (0) fprintf(stderr, "fib: %p, status: %s -> %s\n", (void *)fib, fiber_status_name(fib->status), fiber_status_name(s));
     VM_ASSERT(!FIBER_TERMINATED_P(fib));
     VM_ASSERT(fib->status != s);
     fiber_verify(fib);
-    *((enum fiber_status *)&fib->status) = s;
+    fib->status = s;
 }
 
 void
-ec_set_vm_stack(rb_execution_context_t *ec, VALUE *stack, size_t size)
+rb_ec_set_vm_stack(rb_execution_context_t *ec, VALUE *stack, size_t size)
 {
-    *(VALUE **)(&ec->vm_stack) = stack;
-    *(size_t *)(&ec->vm_stack_size) = size;
+    ec->vm_stack = stack;
+    ec->vm_stack_size = size;
 }
 
 static inline void
 ec_switch(rb_thread_t *th, rb_fiber_t *fib)
 {
     rb_execution_context_t *ec = &fib->cont.saved_ec;
+
     ruby_current_execution_context_ptr = th->ec = ec;
+
+    /*
+     * timer-thread may set trap interrupt on previous th->ec at any time;
+     * ensure we do not delay (or lose) the trap interrupt handling.
+     */
+    if (th->vm->main_thread == th && rb_signal_buff_size() > 0) {
+        RUBY_VM_SET_TRAP_INTERRUPT(ec);
+    }
+
     VM_ASSERT(ec->fiber_ptr->cont.self == 0 || ec->vm_stack != NULL);
 }
 
@@ -249,13 +306,26 @@ static VALUE rb_cContinuation;
 static VALUE rb_cFiber;
 static VALUE rb_eFiberError;
 
-#define GetContPtr(obj, ptr)  \
-    TypedData_Get_Struct((obj), rb_context_t, &cont_data_type, (ptr))
+static rb_context_t *
+cont_ptr(VALUE obj)
+{
+    rb_context_t *cont;
 
-#define GetFiberPtr(obj, ptr)  do {\
-    TypedData_Get_Struct((obj), rb_fiber_t, &fiber_data_type, (ptr)); \
-    if (!(ptr)) rb_raise(rb_eFiberError, "uninitialized fiber"); \
-} while (0)
+    TypedData_Get_Struct(obj, rb_context_t, &cont_data_type, cont);
+
+    return cont;
+}
+
+static rb_fiber_t *
+fiber_ptr(VALUE obj)
+{
+    rb_fiber_t *fib;
+
+    TypedData_Get_Struct(obj, rb_fiber_t, &fiber_data_type, fib);
+    if (!fib) rb_raise(rb_eFiberError, "uninitialized fiber");
+
+    return fib;
+}
 
 NOINLINE(static VALUE cont_capture(volatile int *volatile stat));
 
@@ -316,6 +386,12 @@ cont_mark(void *ptr)
     RUBY_MARK_LEAVE("cont");
 }
 
+static int
+fiber_is_root_p(const rb_fiber_t *fib)
+{
+    return fib == fib->cont.saved_ec.thread_ptr->root_fiber;
+}
+
 static void
 cont_free(void *ptr)
 {
@@ -332,25 +408,31 @@ cont_free(void *ptr)
     }
     else {
 	/* fiber */
-	const rb_fiber_t *fib = (rb_fiber_t*)cont;
+	rb_fiber_t *fib = (rb_fiber_t*)cont;
+#if defined(FIBER_USE_COROUTINE)
+	coroutine_destroy(&fib->context);
+	if (fib->ss_sp != NULL) {
+	    if (fiber_is_root_p(fib)) {
+		rb_bug("Illegal root fiber parameter");
+	    }
 #ifdef _WIN32
-	if (cont->type != ROOT_FIBER_CONTEXT) {
+            VirtualFree((void*)fib->ss_sp, 0, MEM_RELEASE);
+#else
+	    munmap((void*)fib->ss_sp, fib->ss_size);
+#endif
+            fib->ss_sp = NULL;
+	}
+#elif defined(_WIN32)
+	if (!fiber_is_root_p(fib)) {
 	    /* don't delete root fiber handle */
 	    if (fib->fib_handle) {
 		DeleteFiber(fib->fib_handle);
 	    }
 	}
 #else /* not WIN32 */
+        /* fib->ss_sp == NULL is possible for root fiber */
 	if (fib->ss_sp != NULL) {
-	    if (cont->type == ROOT_FIBER_CONTEXT) {
-		rb_bug("Illegal root fiber parameter");
-	    }
 	    munmap((void*)fib->ss_sp, fib->ss_size);
-	}
-	else {
-	    /* It may reached here when finalize */
-	    /* TODO examine whether it is a bug */
-	    /* rb_bug("cont_free: release self"); */
 	}
 #endif
     }
@@ -363,6 +445,9 @@ cont_free(void *ptr)
 #endif
     RUBY_FREE_UNLESS_NULL(cont->saved_vm_stack.ptr);
 
+    if (mjit_enabled && cont->mjit_cont != NULL) {
+        mjit_cont_free(cont->mjit_cont);
+    }
     /* free rb_cont_t or rb_fiber_t */
     ruby_xfree(ptr);
     RUBY_FREE_LEAVE("cont");
@@ -446,12 +531,15 @@ static size_t
 fiber_memsize(const void *ptr)
 {
     const rb_fiber_t *fib = ptr;
-    size_t size = 0;
+    size_t size = sizeof(*fib);
+    const rb_execution_context_t *saved_ec = &fib->cont.saved_ec;
+    const rb_thread_t *th = rb_ec_thread_ptr(saved_ec);
 
-    size = sizeof(*fib);
-    if (fib->cont.type != ROOT_FIBER_CONTEXT &&
-	fib->cont.saved_ec.local_storage != NULL) {
-	size += st_memsize(fib->cont.saved_ec.local_storage);
+    /*
+     * vm.c::thread_memsize already counts th->ec->local_storage
+     */
+    if (saved_ec->local_storage && fib != th->root_fiber) {
+	size += st_memsize(saved_ec->local_storage);
     }
     size += cont_memsize(&fib->cont);
     return size;
@@ -475,7 +563,7 @@ cont_save_machine_stack(rb_thread_t *th, rb_context_t *cont)
 
     SET_MACHINE_STACK_END(&th->ec->machine.stack_end);
 #ifdef __ia64
-    th->machine.register_stack_end = rb_ia64_bsp();
+    th->ec->machine.register_stack_end = rb_ia64_bsp();
 #endif
 
     if (th->ec->machine.stack_start > th->ec->machine.stack_end) {
@@ -499,8 +587,8 @@ cont_save_machine_stack(rb_thread_t *th, rb_context_t *cont)
 
 #ifdef __ia64
     rb_ia64_flushrs();
-    size = cont->machine.register_stack_size = th->machine.register_stack_end - th->machine.register_stack_start;
-    cont->machine.register_stack_src = th->machine.register_stack_start;
+    size = cont->machine.register_stack_size = th->ec->machine.register_stack_end - th->ec->machine.register_stack_start;
+    cont->machine.register_stack_src = th->ec->machine.register_stack_start;
     if (cont->machine.register_stack) {
 	REALLOC_N(cont->machine.register_stack, VALUE, size);
     }
@@ -528,7 +616,7 @@ cont_save_thread(rb_context_t *cont, rb_thread_t *th)
     /* save thread context */
     *sec = *th->ec;
 
-    /* saved_thread->machine.stack_end should be NULL */
+    /* saved_ec->machine.stack_end should be NULL */
     /* because it may happen GC afterward */
     sec->machine.stack_end = NULL;
 
@@ -547,6 +635,9 @@ cont_init(rb_context_t *cont, rb_thread_t *th)
     cont->saved_ec.local_storage = NULL;
     cont->saved_ec.local_storage_recursive_hash = Qnil;
     cont->saved_ec.local_storage_recursive_hash_for_trace = Qnil;
+    if (mjit_enabled) {
+        cont->mjit_cont = mjit_cont_new(&cont->saved_ec);
+    }
 }
 
 static rb_context_t *
@@ -590,6 +681,10 @@ show_vm_pcs(const rb_control_frame_t *cfp,
     }
 }
 #endif
+COMPILER_WARNING_PUSH
+#ifdef __clang__
+COMPILER_WARNING_IGNORED(-Wduplicate-decl-specifier)
+#endif
 static VALUE
 cont_capture(volatile int *volatile stat)
 {
@@ -618,7 +713,7 @@ cont_capture(volatile int *volatile stat)
     cont->saved_vm_stack.ptr = ALLOC_N(VALUE, ec->vm_stack_size);
     MEMCPY(cont->saved_vm_stack.ptr, ec->vm_stack, VALUE, ec->vm_stack_size);
 #endif
-    ec_set_vm_stack(&cont->saved_ec, NULL, 0);
+    rb_ec_set_vm_stack(&cont->saved_ec, NULL, 0);
     cont_save_machine_stack(th, cont);
 
     /* backup ensure_list to array for search in another context */
@@ -652,6 +747,7 @@ cont_capture(volatile int *volatile stat)
 	return contval;
     }
 }
+COMPILER_WARNING_POP
 
 static inline void
 fiber_restore_thread(rb_thread_t *th, rb_fiber_t *fib)
@@ -682,6 +778,10 @@ cont_restore_thread(rb_context_t *cont)
 	    ec_switch(th, fib);
 	}
 
+        if (th->ec->trace_arg != sec->trace_arg) {
+            rb_raise(rb_eRuntimeError, "can't call across trace_func");
+        }
+
 	/* copy vm stack */
 #ifdef CAPTURE_JUST_VALID_VM_STACK
 	MEMCPY(th->ec->vm_stack,
@@ -696,7 +796,6 @@ cont_restore_thread(rb_context_t *cont)
 	/* other members of ec */
 
 	th->ec->cfp = sec->cfp;
-	th->ec->safe_level = sec->safe_level;
 	th->ec->raised_flag = sec->raised_flag;
 	th->ec->tag = sec->tag;
 	th->ec->protect_tag = sec->protect_tag;
@@ -704,16 +803,6 @@ cont_restore_thread(rb_context_t *cont)
 	th->ec->root_svar = sec->root_svar;
 	th->ec->ensure_list = sec->ensure_list;
 	th->ec->errinfo = sec->errinfo;
-
-	/* trace on -> trace off */
-	if (th->ec->trace_arg != NULL && sec->trace_arg == NULL) {
-	    GET_VM()->trace_running--;
-	}
-	/* trace off -> trace on */
-	else if (th->ec->trace_arg == NULL && sec->trace_arg != NULL) {
-	    GET_VM()->trace_running++;
-	}
-	th->ec->trace_arg = sec->trace_arg;
 
 	VM_ASSERT(th->ec->vm_stack != NULL);
     }
@@ -724,7 +813,13 @@ cont_restore_thread(rb_context_t *cont)
 }
 
 #if FIBER_USE_NATIVE
-#ifdef _WIN32
+#if defined(FIBER_USE_COROUTINE)
+static COROUTINE
+fiber_entry(coroutine_context * from, coroutine_context * to)
+{
+    rb_fiber_start();
+}
+#elif defined(_WIN32)
 static void
 fiber_set_stack_location(void)
 {
@@ -735,14 +830,24 @@ fiber_set_stack_location(void)
     th->ec->machine.stack_start = (void*)(((VALUE)ptr & RB_PAGE_MASK) + STACK_UPPER((void *)&ptr, 0, RB_PAGE_SIZE));
 }
 
+NORETURN(static VOID CALLBACK fiber_entry(void *arg));
 static VOID CALLBACK
 fiber_entry(void *arg)
 {
     fiber_set_stack_location();
     rb_fiber_start();
 }
-#else /* _WIN32 */
+#else
+NORETURN(static void fiber_entry(void *arg));
+static void
+fiber_entry(void *arg)
+{
+    rb_fiber_start();
+}
+#endif
+#endif
 
+#ifdef FIBER_ALLOCATE_STACK
 /*
  * FreeBSD require a first (i.e. addr) argument of mmap(2) is not NULL
  * if MAP_STACK is passed.
@@ -754,50 +859,76 @@ fiber_entry(void *arg)
 #define FIBER_STACK_FLAGS (MAP_PRIVATE | MAP_ANON)
 #endif
 
+#define ERRNOMSG strerror(errno)
+
 static char*
 fiber_machine_stack_alloc(size_t size)
 {
     char *ptr;
+#ifdef _WIN32
+    DWORD old_protect;
+#endif
 
     if (machine_stack_cache_index > 0) {
-	if (machine_stack_cache[machine_stack_cache_index - 1].size == (size / sizeof(VALUE))) {
-	    ptr = machine_stack_cache[machine_stack_cache_index - 1].ptr;
-	    machine_stack_cache_index--;
-	    machine_stack_cache[machine_stack_cache_index].ptr = NULL;
-	    machine_stack_cache[machine_stack_cache_index].size = 0;
-	}
-	else{
+        if (machine_stack_cache[machine_stack_cache_index - 1].size == (size / sizeof(VALUE))) {
+            ptr = machine_stack_cache[machine_stack_cache_index - 1].ptr;
+            machine_stack_cache_index--;
+            machine_stack_cache[machine_stack_cache_index].ptr = NULL;
+            machine_stack_cache[machine_stack_cache_index].size = 0;
+        } else {
             /* TODO handle multiple machine stack size */
-	    rb_bug("machine_stack_cache size is not canonicalized");
-	}
-    }
-    else {
-	void *page;
-	STACK_GROW_DIR_DETECTION;
+            rb_bug("machine_stack_cache size is not canonicalized");
+        }
+    } else {
+#ifdef _WIN32
+        ptr = VirtualAlloc(0, size, MEM_COMMIT, PAGE_READWRITE);
 
-	errno = 0;
-	ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, FIBER_STACK_FLAGS, -1, 0);
-	if (ptr == MAP_FAILED) {
-	    rb_raise(rb_eFiberError, "can't alloc machine stack to fiber: %s", strerror(errno));
-	}
+        if (!ptr) {
+            rb_raise(rb_eFiberError, "can't allocate machine stack to fiber: %s", ERRNOMSG);
+        }
 
-	/* guard page setup */
-	page = ptr + STACK_DIR_UPPER(size - RB_PAGE_SIZE, 0);
-	if (mprotect(page, RB_PAGE_SIZE, PROT_NONE) < 0) {
-	    rb_raise(rb_eFiberError, "mprotect failed");
-	}
+        if (!VirtualProtect(ptr, RB_PAGE_SIZE, PAGE_READWRITE | PAGE_GUARD, &old_protect)) {
+            rb_raise(rb_eFiberError, "can't set a guard page: %s", ERRNOMSG);
+        }
+#else
+        void *page;
+        STACK_GROW_DIR_DETECTION;
+
+        errno = 0;
+        ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, FIBER_STACK_FLAGS, -1, 0);
+        if (ptr == MAP_FAILED) {
+            rb_raise(rb_eFiberError, "can't alloc machine stack to fiber: %s", ERRNOMSG);
+        }
+
+        /* guard page setup */
+        page = ptr + STACK_DIR_UPPER(size - RB_PAGE_SIZE, 0);
+        if (mprotect(page, RB_PAGE_SIZE, PROT_NONE) < 0) {
+            rb_raise(rb_eFiberError, "can't set a guard page: %s", ERRNOMSG);
+        }
+#endif
     }
 
     return ptr;
 }
 #endif
 
+#if FIBER_USE_NATIVE
 static void
 fiber_initialize_machine_stack_context(rb_fiber_t *fib, size_t size)
 {
     rb_execution_context_t *sec = &fib->cont.saved_ec;
 
-#ifdef _WIN32
+#if defined(FIBER_USE_COROUTINE)
+    char *ptr;
+    STACK_GROW_DIR_DETECTION;
+
+    ptr = fiber_machine_stack_alloc(size);
+    fib->ss_sp = ptr;
+    fib->ss_size = size;
+    coroutine_initialize(&fib->context, fiber_entry, ptr+size, size);
+    sec->machine.stack_start = (VALUE*)(ptr + STACK_DIR_UPPER(0, size));
+    sec->machine.stack_maxsize = size - RB_PAGE_SIZE;
+#elif defined(_WIN32)
 # if defined(_MSC_VER) && _MSC_VER <= 1200
 #   define CreateFiberEx(cs, stacksize, flags, entry, param) \
     CreateFiber((stacksize), (entry), (param))
@@ -813,18 +944,15 @@ fiber_initialize_machine_stack_context(rb_fiber_t *fib, size_t size)
     }
     sec->machine.stack_maxsize = size;
 #else /* not WIN32 */
-    ucontext_t *context = &fib->context;
     char *ptr;
     STACK_GROW_DIR_DETECTION;
 
-    getcontext(context);
     ptr = fiber_machine_stack_alloc(size);
-    context->uc_link = NULL;
-    context->uc_stack.ss_sp = ptr;
-    context->uc_stack.ss_size = size;
     fib->ss_sp = ptr;
     fib->ss_size = size;
-    makecontext(context, rb_fiber_start, 0);
+    if (fiber_context_create(&fib->context, fiber_entry, NULL, fib->ss_sp, fib->ss_size)) {
+	rb_raise(rb_eFiberError, "can't get context for creating fiber: %s", ERRNOMSG);
+    }
     sec->machine.stack_start = (VALUE*)(ptr + STACK_DIR_UPPER(0, size));
     sec->machine.stack_maxsize = size - RB_PAGE_SIZE;
 #endif
@@ -863,19 +991,19 @@ fiber_setcontext(rb_fiber_t *newfib, rb_fiber_t *oldfib)
     /* restore thread context */
     fiber_restore_thread(th, newfib);
 
-#ifndef _WIN32
+    /* swap machine context */
+#if defined(FIBER_USE_COROUTINE)
+    coroutine_transfer(&oldfib->context, &newfib->context);
+#elif defined(_WIN32)
+    SwitchToFiber(newfib->fib_handle);
+#else
     if (!newfib->context.uc_stack.ss_sp && th->root_fiber != newfib) {
 	rb_bug("non_root_fiber->context.uc_stac.ss_sp should not be NULL");
     }
-#endif
-    /* swap machine context */
-#ifdef _WIN32
-    SwitchToFiber(newfib->fib_handle);
-#else
     swapcontext(&oldfib->context, &newfib->context);
 #endif
 }
-#endif
+#endif /* FIBER_USE_NATIVE */
 
 NOINLINE(NORETURN(static void cont_restore_1(rb_context_t *)));
 
@@ -1137,7 +1265,7 @@ rollback_ensure_stack(VALUE self,rb_ensure_list_t *current,rb_ensure_entry_t *ta
 {
     rb_ensure_list_t *p;
     rb_ensure_entry_t *entry;
-    size_t i;
+    size_t i, j;
     size_t cur_size;
     size_t target_size;
     size_t base_point;
@@ -1175,11 +1303,11 @@ rollback_ensure_stack(VALUE self,rb_ensure_list_t *current,rb_ensure_entry_t *ta
 	cur_size--;
     }
     /* push ensure stack */
-    while (i--) {
-	func = (VALUE (*)(ANYARGS)) lookup_rollback_func(target[i].e_proc);
-	if ((VALUE)func != Qundef) {
-	    (*func)(target[i].data2);
-	}
+    for (j = 0; j < i; j++) {
+        func = (VALUE (*)(ANYARGS)) lookup_rollback_func(target[i - j - 1].e_proc);
+        if ((VALUE)func != Qundef) {
+            (*func)(target[i - j - 1].data2);
+        }
     }
 }
 
@@ -1202,9 +1330,8 @@ rollback_ensure_stack(VALUE self,rb_ensure_list_t *current,rb_ensure_entry_t *ta
 static VALUE
 rb_cont_call(int argc, VALUE *argv, VALUE contval)
 {
-    rb_context_t *cont;
+    rb_context_t *cont = cont_ptr(contval);
     rb_thread_t *th = GET_THREAD();
-    GetContPtr(contval, cont);
 
     if (cont_thread_value(cont) != th->self) {
 	rb_raise(rb_eRuntimeError, "continuation called across threads");
@@ -1351,13 +1478,20 @@ fiber_init(VALUE fibval, VALUE proc)
     rb_context_t *cont = &fib->cont;
     rb_execution_context_t *sec = &cont->saved_ec;
     rb_thread_t *cth = GET_THREAD();
-    size_t fib_stack_size = cth->vm->default_params.fiber_vm_stack_size / sizeof(VALUE);
+    rb_vm_t *vm = cth->vm;
+    size_t fib_stack_bytes = vm->default_params.fiber_vm_stack_size;
+    size_t thr_stack_bytes = vm->default_params.thread_vm_stack_size;
+    VALUE *vm_stack;
 
     /* initialize cont */
     cont->saved_vm_stack.ptr = NULL;
-    ec_set_vm_stack(sec, NULL, 0);
-
-    ec_set_vm_stack(sec, ALLOC_N(VALUE, fib_stack_size), fib_stack_size);
+    if (fib_stack_bytes == thr_stack_bytes) {
+        vm_stack = rb_thread_recycle_stack(fib_stack_bytes / sizeof(VALUE));
+    }
+    else {
+        vm_stack = ruby_xmalloc(fib_stack_bytes);
+    }
+    rb_ec_set_vm_stack(sec, vm_stack, fib_stack_bytes / sizeof(VALUE));
     sec->cfp = (void *)(sec->vm_stack + sec->vm_stack_size);
 
     rb_vm_push_frame(sec,
@@ -1456,19 +1590,29 @@ root_fiber_alloc(rb_thread_t *th)
     rb_fiber_t *fib = th->ec->fiber_ptr;
 
     VM_ASSERT(DATA_PTR(fibval) == NULL);
-    VM_ASSERT(fib->cont.type == ROOT_FIBER_CONTEXT);
+    VM_ASSERT(fib->cont.type == FIBER_CONTEXT);
     VM_ASSERT(fib->status == FIBER_RESUMED);
 
     th->root_fiber = fib;
     DATA_PTR(fibval) = fib;
     fib->cont.self = fibval;
+
 #if FIBER_USE_NATIVE
-#ifdef _WIN32
+#if defined(FIBER_USE_COROUTINE)
+    coroutine_initialize(&fib->context, NULL, NULL, 0);
+#elif defined(_WIN32)
+    /* setup fib_handle for root Fiber */
     if (fib->fib_handle == 0) {
-	fib->fib_handle = ConvertThreadToFiber(0);
+        if ((fib->fib_handle = ConvertThreadToFiber(0)) == 0) {
+            rb_bug("root_fiber_alloc: ConvertThreadToFiber() failed - %s\n", rb_w32_strerror(-1));
+        }
+    }
+    else {
+        rb_bug("root_fiber_alloc: fib_handle is not NULL.");
     }
 #endif
 #endif
+
     return fib;
 }
 
@@ -1477,18 +1621,13 @@ rb_threadptr_root_fiber_setup(rb_thread_t *th)
 {
     rb_fiber_t *fib = ruby_mimmalloc(sizeof(rb_fiber_t));
     MEMZERO(fib, rb_fiber_t, 1);
-    fib->cont.type = ROOT_FIBER_CONTEXT;
+    fib->cont.type = FIBER_CONTEXT;
     fib->cont.saved_ec.fiber_ptr = fib;
     fib->cont.saved_ec.thread_ptr = th;
     fiber_status_set(fib, FIBER_RESUMED); /* skip CREATED */
     th->ec = &fib->cont.saved_ec;
-#if FIBER_USE_NATIVE
-#ifdef _WIN32
-    if (fib->fib_handle == 0) {
-	fib->fib_handle = ConvertThreadToFiber(0);
-    }
-#endif
-#endif
+
+    /* NOTE: On WIN32, fib_handle is not allocated yet. */
 }
 
 void
@@ -1498,7 +1637,7 @@ rb_threadptr_root_fiber_release(rb_thread_t *th)
 	/* ignore. A root fiber object will free th->ec */
     }
     else {
-	VM_ASSERT(th->ec->fiber_ptr->cont.type == ROOT_FIBER_CONTEXT);
+	VM_ASSERT(th->ec->fiber_ptr->cont.type == FIBER_CONTEXT);
 	VM_ASSERT(th->ec->fiber_ptr->cont.self == 0);
 	fiber_free(th->ec->fiber_ptr);
 
@@ -1554,11 +1693,11 @@ fiber_store(rb_fiber_t *next_fib, rb_thread_t *th)
     rb_fiber_t *fib;
 
     if (th->ec->fiber_ptr != NULL) {
-	fib = th->ec->fiber_ptr;
+        fib = th->ec->fiber_ptr;
     }
     else {
-	/* create root fiber */
-	fib = root_fiber_alloc(th);
+        /* create root fiber */
+        fib = root_fiber_alloc(th);
     }
 
     VM_ASSERT(FIBER_RESUMED_P(fib) || FIBER_TERMINATED_P(fib));
@@ -1566,7 +1705,7 @@ fiber_store(rb_fiber_t *next_fib, rb_thread_t *th)
 
 #if FIBER_USE_NATIVE
     if (FIBER_CREATED_P(next_fib)) {
-	fiber_initialize_machine_stack_context(next_fib, th->vm->default_params.fiber_machine_stack_size);
+        fiber_initialize_machine_stack_context(next_fib, th->vm->default_params.fiber_machine_stack_size);
     }
 #endif
 
@@ -1582,23 +1721,25 @@ fiber_store(rb_fiber_t *next_fib, rb_thread_t *th)
 #if FIBER_USE_NATIVE
     fiber_setcontext(next_fib, fib);
     /* restored */
-#ifndef _WIN32
+#ifdef MAX_MACHINE_STACK_CACHE
     if (terminated_machine_stack.ptr) {
-	if (machine_stack_cache_index < MAX_MACHINE_STACK_CACHE) {
-	    machine_stack_cache[machine_stack_cache_index].ptr = terminated_machine_stack.ptr;
-	    machine_stack_cache[machine_stack_cache_index].size = terminated_machine_stack.size;
-	    machine_stack_cache_index++;
-	}
-	else {
-	    if (terminated_machine_stack.ptr != fib->cont.machine.stack) {
-		munmap((void*)terminated_machine_stack.ptr, terminated_machine_stack.size * sizeof(VALUE));
-	    }
-	    else {
-		rb_bug("terminated fiber resumed");
-	    }
-	}
-	terminated_machine_stack.ptr = NULL;
-	terminated_machine_stack.size = 0;
+        if (machine_stack_cache_index < MAX_MACHINE_STACK_CACHE) {
+            machine_stack_cache[machine_stack_cache_index++] = terminated_machine_stack;
+        }
+        else {
+            if (terminated_machine_stack.ptr != fib->cont.machine.stack) {
+#ifdef _WIN32
+                VirtualFree(terminated_machine_stack.ptr, 0, MEM_RELEASE);
+#else
+                munmap((void*)terminated_machine_stack.ptr, terminated_machine_stack.size * sizeof(VALUE));
+#endif
+            }
+            else {
+                rb_bug("terminated fiber resumed");
+            }
+        }
+        terminated_machine_stack.ptr = NULL;
+        terminated_machine_stack.size = 0;
     }
 #endif /* not _WIN32 */
     fib = th->ec->fiber_ptr;
@@ -1606,20 +1747,21 @@ fiber_store(rb_fiber_t *next_fib, rb_thread_t *th)
     return fib->cont.value;
 
 #else /* FIBER_USE_NATIVE */
+    fib->cont.saved_ec.machine.stack_end = NULL;
     if (ruby_setjmp(fib->cont.jmpbuf)) {
-	/* restored */
-	fib = th->ec->fiber_ptr;
-	if (fib->cont.argc == -1) rb_exc_raise(fib->cont.value);
-	if (next_fib->cont.value == Qundef) {
-	    cont_restore_0(&next_fib->cont, &next_fib->cont.value);
-	    VM_UNREACHABLE(fiber_store);
-	}
-	return fib->cont.value;
+        /* restored */
+        fib = th->ec->fiber_ptr;
+        if (fib->cont.argc == -1) rb_exc_raise(fib->cont.value);
+        if (next_fib->cont.value == Qundef) {
+            cont_restore_0(&next_fib->cont, &next_fib->cont.value);
+            VM_UNREACHABLE(fiber_store);
+        }
+        return fib->cont.value;
     }
     else {
-	VALUE undef = Qundef;
-	cont_restore_0(&next_fib->cont, &undef);
-	VM_UNREACHABLE(fiber_store);
+        VALUE undef = Qundef;
+        cont_restore_0(&next_fib->cont, &undef);
+        VM_UNREACHABLE(fiber_store);
     }
 #endif /* FIBER_USE_NATIVE */
 }
@@ -1691,27 +1833,28 @@ fiber_switch(rb_fiber_t *fib, int argc, const VALUE *argv, int is_resume)
 VALUE
 rb_fiber_transfer(VALUE fibval, int argc, const VALUE *argv)
 {
-    rb_fiber_t *fib;
-    GetFiberPtr(fibval, fib);
-    return fiber_switch(fib, argc, argv, 0);
+    return fiber_switch(fiber_ptr(fibval), argc, argv, 0);
 }
 
 void
 rb_fiber_close(rb_fiber_t *fib)
 {
-    VALUE *vm_stack = fib->cont.saved_ec.vm_stack;
+    rb_execution_context_t *ec = &fib->cont.saved_ec;
+    VALUE *vm_stack = ec->vm_stack;
+    size_t stack_bytes = ec->vm_stack_size * sizeof(VALUE);
+
     fiber_status_set(fib, FIBER_TERMINATED);
-    if (fib->cont.type == ROOT_FIBER_CONTEXT) {
-	rb_thread_recycle_stack_release(vm_stack);
+    if (stack_bytes == rb_ec_vm_ptr(ec)->default_params.thread_vm_stack_size) {
+        rb_thread_recycle_stack_release(vm_stack);
     }
     else {
-	ruby_xfree(vm_stack);
+        ruby_xfree(vm_stack);
     }
-    ec_set_vm_stack(&fib->cont.saved_ec, NULL, 0);
+    rb_ec_set_vm_stack(ec, NULL, 0);
 
 #if !FIBER_USE_NATIVE
     /* should not mark machine stack any more */
-    fib->cont.saved_ec.machine.stack_end = NULL;
+    ec->machine.stack_end = NULL;
 #endif
 }
 
@@ -1724,14 +1867,21 @@ rb_fiber_terminate(rb_fiber_t *fib, int need_interrupt)
     VM_ASSERT(FIBER_RESUMED_P(fib));
     rb_fiber_close(fib);
 
-#if FIBER_USE_NATIVE && !defined(_WIN32)
+#if FIBER_USE_NATIVE
+#if defined(FIBER_USE_COROUTINE)
+    coroutine_destroy(&fib->context);
+#elif !defined(_WIN32)
+    fib->context.uc_stack.ss_sp = NULL;
+#endif
+
+#ifdef MAX_MACHINE_STACK_CACHE
     /* Ruby must not switch to other thread until storing terminated_machine_stack */
     terminated_machine_stack.ptr = fib->ss_sp;
     terminated_machine_stack.size = fib->ss_size / sizeof(VALUE);
     fib->ss_sp = NULL;
-    fib->context.uc_stack.ss_sp = NULL;
     fib->cont.machine.stack = NULL;
     fib->cont.machine.stack_size = 0;
+#endif
 #endif
 
     ret_fib = return_fiber();
@@ -1742,10 +1892,9 @@ rb_fiber_terminate(rb_fiber_t *fib, int need_interrupt)
 VALUE
 rb_fiber_resume(VALUE fibval, int argc, const VALUE *argv)
 {
-    rb_fiber_t *fib;
-    GetFiberPtr(fibval, fib);
+    rb_fiber_t *fib = fiber_ptr(fibval);
 
-    if (fib->prev != 0 || fib->cont.type == ROOT_FIBER_CONTEXT) {
+    if (fib->prev != 0 || fiber_is_root_p(fib)) {
 	rb_raise(rb_eFiberError, "double resume");
     }
     if (fib->transferred != 0) {
@@ -1762,10 +1911,8 @@ rb_fiber_yield(int argc, const VALUE *argv)
 }
 
 void
-rb_fiber_reset_root_local_storage(VALUE thval)
+rb_fiber_reset_root_local_storage(rb_thread_t *th)
 {
-    rb_thread_t *th = rb_thread_ptr(thval);
-
     if (th->root_fiber && th->root_fiber != th->ec->fiber_ptr) {
 	th->ec->local_storage = th->root_fiber->cont.saved_ec.local_storage;
     }
@@ -1783,9 +1930,7 @@ rb_fiber_reset_root_local_storage(VALUE thval)
 VALUE
 rb_fiber_alive_p(VALUE fibval)
 {
-    const rb_fiber_t *fib;
-    GetFiberPtr(fibval, fib);
-    return FIBER_TERMINATED_P(fib) ? Qfalse : Qtrue;
+    return FIBER_TERMINATED_P(fiber_ptr(fibval)) ? Qfalse : Qtrue;
 }
 
 /*
@@ -1857,8 +2002,7 @@ rb_fiber_m_resume(int argc, VALUE *argv, VALUE fib)
 static VALUE
 rb_fiber_m_transfer(int argc, VALUE *argv, VALUE fibval)
 {
-    rb_fiber_t *fib;
-    GetFiberPtr(fibval, fib);
+    rb_fiber_t *fib = fiber_ptr(fibval);
     fib->transferred = 1;
     return fiber_switch(fib, argc, argv, 0);
 }
@@ -1904,11 +2048,10 @@ rb_fiber_s_current(VALUE klass)
 static VALUE
 fiber_to_s(VALUE fibval)
 {
-    const rb_fiber_t *fib;
+    const rb_fiber_t *fib = fiber_ptr(fibval);
     const rb_proc_t *proc;
     char status_info[0x10];
 
-    GetFiberPtr(fibval, fib);
     snprintf(status_info, 0x10, " (%s)", fiber_status_name(fib->status));
     if (!rb_obj_is_proc(fib->first_proc)) {
 	VALUE str = rb_any_to_s(fibval);
@@ -1920,6 +2063,19 @@ fiber_to_s(VALUE fibval)
     GetProcPtr(fib->first_proc, proc);
     return rb_block_to_s(fibval, &proc->block, status_info);
 }
+
+#ifdef HAVE_WORKING_FORK
+void
+rb_fiber_atfork(rb_thread_t *th)
+{
+    if (th->root_fiber) {
+        if (&th->root_fiber->cont.saved_ec != th->ec) {
+            th->root_fiber = th->ec->fiber_ptr;
+        }
+        th->root_fiber->prev = 0;
+    }
+}
+#endif
 
 /*
  *  Document-class: FiberError

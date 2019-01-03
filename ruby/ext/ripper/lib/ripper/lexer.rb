@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 #
-# $Id: lexer.rb 61205 2017-12-13 10:26:09Z nobu $
+# $Id: lexer.rb 66189 2018-12-04 08:22:10Z kazu $
 #
 # Copyright (c) 2004,2005 Minero Aoki
 #
@@ -186,7 +186,7 @@ class Ripper
       if m = /[^\w\s$()\[\]{}?*+\.]/.match(pattern)
         raise CompileError, "invalid char in pattern: #{m[0].inspect}"
       end
-      buf = ''
+      buf = +''
       pattern.scan(/(?:\w+|\$\(|[()\[\]\{\}?*+\.]+)/) do |tok|
         case tok
         when /\w/
@@ -207,14 +207,14 @@ class Ripper
     end
 
     def map_tokens(tokens)
-      tokens.map {|pos,type,str| map_token(type.to_s.sub(/\Aon_/,'')) }.join
+      tokens.map {|pos,type,str| map_token(type.to_s.delete_prefix('on_')) }.join
     end
 
     MAP = {}
     seed = ('a'..'z').to_a + ('A'..'Z').to_a + ('0'..'9').to_a
     SCANNER_EVENT_TABLE.each do |ev, |
       raise CompileError, "[RIPPER FATAL] too many system token" if seed.empty?
-      MAP[ev.to_s.sub(/\Aon_/,'')] = seed.shift
+      MAP[ev.to_s.delete_prefix('on_')] = seed.shift
     end
 
     def map_token(tok)

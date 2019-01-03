@@ -1,8 +1,8 @@
-require File.expand_path('../../../../spec_helper', __FILE__)
-require File.expand_path('../../fixtures/classes', __FILE__)
+require_relative '../spec_helper'
+require_relative '../fixtures/classes'
 
-describe 'Socket.unpack_sockaddr_un' do
-  platform_is_not :windows do
+with_feature :unix_socket do
+  describe 'Socket.unpack_sockaddr_un' do
     it 'decodes sockaddr to unix path' do
       sockaddr = Socket.sockaddr_un('/tmp/sock')
       Socket.unpack_sockaddr_un(sockaddr).should == '/tmp/sock'

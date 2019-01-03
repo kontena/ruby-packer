@@ -2,7 +2,7 @@
 #
 #   irb/ruby-lex.rb - ruby lexcal analyzer
 #   	$Release Version: 0.9.6$
-#   	$Revision: 58418 $
+#   	$Revision: 65506 $
 #   	by Keiju ISHITSUKA(keiju@ruby-lang.org)
 #
 # --
@@ -11,8 +11,8 @@
 #
 
 require "e2mmap"
-require "irb/slex"
-require "irb/ruby-token"
+require_relative "slex"
+require_relative "ruby-token"
 
 # :stopdoc:
 class RubyLex

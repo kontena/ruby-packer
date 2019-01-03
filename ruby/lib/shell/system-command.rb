@@ -2,7 +2,7 @@
 #
 #   shell/system-command.rb -
 #       $Release Version: 0.7 $
-#       $Revision: 59145 $
+#       $Revision: 65505 $
 #       by Keiju ISHITSUKA(keiju@ruby-lang.org)
 #
 # --
@@ -10,7 +10,7 @@
 #
 #
 
-require "shell/filter"
+require_relative "filter"
 
 class Shell
   class SystemCommand < Filter

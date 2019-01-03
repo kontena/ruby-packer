@@ -1,4 +1,4 @@
-require File.expand_path('../../../spec_helper', __FILE__)
+require_relative '../../spec_helper'
 
 describe "Time#getlocal" do
   it "returns a new time which is the local representation of time" do
@@ -94,5 +94,21 @@ describe "Time#getlocal" do
     t = Time.new
     t.getlocal(86400 - 1).utc_offset.should == (86400 - 1)
     lambda { t.getlocal(86400) }.should raise_error(ArgumentError)
+  end
+
+  ruby_version_is "2.6" do
+    describe "with a timezone argument" do
+      it "returns a Time in the timezone" do
+        zone = mock('timezone')
+        zone.should_receive(:utc_to_local).and_return(Time.utc(2000, 1, 1, 17, 30, 0))
+        t = Time.utc(2000, 1, 1, 12, 0, 0)
+        tv = t.to_i
+        t = t.getlocal(zone)
+        t.to_a[0, 6].should == [0, 30, 17, 1, 1, 2000]
+        t.utc_offset.should == 19800
+        t.to_i.should == tv
+        t.zone.should == zone
+      end
+    end
   end
 end

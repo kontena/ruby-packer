@@ -15,7 +15,6 @@ static inline void
 pass_passed_block_handler(rb_execution_context_t *ec)
 {
     VALUE block_handler = rb_vm_frame_block_handler(ec->cfp);
-    vm_block_handler_verify(block_handler);
     vm_passed_block_handler_set(ec, block_handler);
     VM_ENV_FLAGS_SET(ec->cfp->ep, VM_FRAME_FLAG_PASSED);
 }
@@ -161,10 +160,10 @@ LONG WINAPI rb_w32_stack_overflow_handler(struct _EXCEPTION_POINTERS *);
 #if defined(USE_UNALIGNED_MEMBER_ACCESS) && USE_UNALIGNED_MEMBER_ACCESS && \
     defined(__clang__)
 # define UNALIGNED_MEMBER_ACCESS(expr) __extension__({ \
-    _Pragma("GCC diagnostic push"); \
-    _Pragma("GCC diagnostic ignored \"-Waddress-of-packed-member\""); \
+    COMPILER_WARNING_PUSH; \
+    COMPILER_WARNING_IGNORED(-Waddress-of-packed-member); \
     typeof(expr) unaligned_member_access_result = (expr); \
-    _Pragma("GCC diagnostic pop"); \
+    COMPILER_WARNING_POP; \
     unaligned_member_access_result; \
 })
 #else

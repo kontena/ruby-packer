@@ -2,14 +2,14 @@
 
   digest.c -
 
-  $Author: svn $
+  $Author: nobu $
   created at: Fri May 25 08:57:27 JST 2001
 
   Copyright (C) 1995-2001 Yukihiro Matsumoto
   Copyright (C) 2001-2006 Akinori MUSHA
 
   $RoughId: digest.c,v 1.16 2001/07/13 15:38:27 knu Exp $
-  $Id: digest.c 56456 2016-10-20 07:57:31Z svn $
+  $Id: digest.c 62429 2018-02-16 08:39:48Z nobu $
 
 ************************************************/
 
@@ -728,6 +728,7 @@ rb_digest_base_block_length(VALUE self)
 void
 Init_digest(void)
 {
+#undef rb_intern
     id_reset           = rb_intern("reset");
     id_update          = rb_intern("update");
     id_finish          = rb_intern("finish");

@@ -6,7 +6,7 @@
 # License::
 #   You can redistribute it and/or modify it under the same terms of Ruby's
 #   license; either the dual license version in 2003, or any later version.
-# Revision:: $Id: logger.rb 61378 2017-12-21 05:07:43Z sonots $
+# Revision:: $Id: logger.rb 66358 2018-12-12 09:40:06Z hsbt $
 #
 # A simple system for logging messages.  See Logger for more documentation.
 
@@ -109,7 +109,7 @@ require 'monitor'
 # 3. Create a logger for the specified file.
 #
 #      file = File.open('foo.log', File::WRONLY | File::APPEND)
-#      # To create new (and to remove old) logfile, add File::CREAT like:
+#      # To create new logfile, add File::CREAT like:
 #      # file = File.open('foo.log', File::WRONLY | File::APPEND | File::CREAT)
 #      logger = Logger.new(file)
 #
@@ -224,8 +224,8 @@ require 'monitor'
 #   })
 #
 class Logger
-  VERSION = "1.2.7"
-  _, name, rev = %w$Id: logger.rb 61378 2017-12-21 05:07:43Z sonots $
+  VERSION = "1.3.0"
+  _, name, rev = %w$Id: logger.rb 66358 2018-12-12 09:40:06Z hsbt $
   if name
     name = name.chomp(",v")
   else
@@ -479,9 +479,7 @@ class Logger
   # device exists, return +nil+.
   #
   def <<(msg)
-    unless @logdev.nil?
-      @logdev.write(msg)
-    end
+    @logdev&.write(msg)
   end
 
   #
@@ -568,7 +566,7 @@ class Logger
   # Close the logging device.
   #
   def close
-    @logdev.close if @logdev
+    @logdev&.close
   end
 
 private

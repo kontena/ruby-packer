@@ -9,8 +9,9 @@
 
 **********************************************************************/
 
-#include "internal.h"
+#include "ruby/encoding.h"
 #include "ruby/debug.h"
+#include "internal.h"
 
 #include "vm_core.h"
 #include "eval_intern.h"
@@ -32,8 +33,18 @@ inline static int
 calc_lineno(const rb_iseq_t *iseq, const VALUE *pc)
 {
     size_t pos = (size_t)(pc - iseq->body->iseq_encoded);
-    /* use pos-1 because PC points next instruction at the beginning of instruction */
-    return rb_iseq_line_no(iseq, pos - 1);
+    if (LIKELY(pos)) {
+        /* use pos-1 because PC points next instruction at the beginning of instruction */
+        pos--;
+    }
+#if VMDEBUG && defined(HAVE_BUILTIN___BUILTIN_TRAP)
+    else {
+        /* SDR() is not possible; that causes infinite loop. */
+        rb_print_backtrace();
+        __builtin_trap();
+    }
+#endif
+    return rb_iseq_line_no(iseq, pos);
 }
 
 int
@@ -519,7 +530,7 @@ bt_iter_cfunc(void *ptr, const rb_control_frame_t *cfp, ID mid)
     loc->body.cfunc.prev_loc = arg->prev_loc;
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_ec_backtrace_object(const rb_execution_context_t *ec)
 {
     struct bt_iter_arg arg;
@@ -594,7 +605,7 @@ rb_backtrace_to_str_ary(VALUE self)
     return bt->strary;
 }
 
-void
+MJIT_FUNC_EXPORTED void
 rb_backtrace_use_iseq_first_lineno_for_last_location(VALUE self)
 {
     const rb_backtrace_t *bt;
@@ -682,7 +693,7 @@ rb_ec_backtrace_str_ary(const rb_execution_context_t *ec, long lev, long n)
     return backtrace_to_str_ary(rb_ec_backtrace_object(ec), lev, n);
 }
 
-VALUE
+static VALUE
 ec_backtrace_location_ary(const rb_execution_context_t *ec, long lev, long n)
 {
     return backtrace_to_location_ary(rb_ec_backtrace_object(ec), lev, n);
@@ -1200,6 +1211,9 @@ rb_debug_inspector_open(rb_debug_inspector_func_t func, void *data)
     rb_execution_context_t *ec = GET_EC();
     enum ruby_tag_type state;
     volatile VALUE MAYBE_UNUSED(result);
+
+    /* escape all env to heap */
+    rb_vm_stack_to_heap(ec);
 
     dbg_context.ec = ec;
     dbg_context.cfp = dbg_context.ec->cfp;

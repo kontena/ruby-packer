@@ -2,7 +2,7 @@
 
   method.h -
 
-  $Author: mame $
+  $Author: nobu $
   created at: Wed Jul 15 20:02:33 2009
 
   Copyright (C) 2009 Koichi Sasada
@@ -33,7 +33,7 @@ typedef enum {
 } rb_method_visibility_t;
 
 typedef struct rb_scope_visi_struct {
-    rb_method_visibility_t method_visi : 3;
+    BITFIELD(rb_method_visibility_t, method_visi, 3);
     unsigned int module_func : 1;
 } rb_scope_visibility_t;
 
@@ -114,6 +114,8 @@ typedef enum {
 
     END_OF_ENUMERATION(VM_METHOD_TYPE)
 } rb_method_type_t;
+#define VM_METHOD_TYPE_MINIMUM_BITS 4
+/* TODO: STATIC_ASSERT for VM_METHOD_TYPE_MINIMUM_BITS */
 
 #ifndef rb_iseq_t
 typedef struct rb_iseq_struct rb_iseq_t;
@@ -145,14 +147,20 @@ typedef struct rb_method_refined_struct {
     const VALUE owner;
 } rb_method_refined_t;
 
+typedef struct rb_method_bmethod_struct {
+    const VALUE proc; /* should be marked */
+    struct rb_hook_list_struct *hooks;
+} rb_method_bmethod_t;
+
 enum method_optimized_type {
     OPTIMIZED_METHOD_TYPE_SEND,
     OPTIMIZED_METHOD_TYPE_CALL,
+    OPTIMIZED_METHOD_TYPE_BLOCK_CALL,
     OPTIMIZED_METHOD_TYPE__MAX
 };
 
 PACKED_STRUCT_UNALIGNED(struct rb_method_definition_struct {
-    unsigned int type :  4; /* method type */
+    BITFIELD(rb_method_type_t, type, VM_METHOD_TYPE_MINIMUM_BITS);
     int alias_count : 28;
     int complemented_count : 28;
 
@@ -162,9 +170,9 @@ PACKED_STRUCT_UNALIGNED(struct rb_method_definition_struct {
 	rb_method_attr_t attr;
 	rb_method_alias_t alias;
 	rb_method_refined_t refined;
+        rb_method_bmethod_t bmethod;
 
-	const VALUE proc;                 /* should be marked */
-	enum method_optimized_type optimize_type;
+        enum method_optimized_type optimize_type;
     } body;
 
     ID original_id;
@@ -191,6 +199,7 @@ const rb_method_entry_t *rb_method_entry(VALUE klass, ID id);
 const rb_method_entry_t *rb_method_entry_without_refinements(VALUE klass, ID id, VALUE *defined_class);
 const rb_method_entry_t *rb_resolve_refined_method(VALUE refinements, const rb_method_entry_t *me);
 RUBY_SYMBOL_EXPORT_BEGIN
+const rb_callable_method_entry_t *rb_resolve_refined_method_callable(VALUE refinements, const rb_callable_method_entry_t *me);
 const rb_method_entry_t *rb_resolve_me_location(const rb_method_entry_t *, VALUE[5]);
 RUBY_SYMBOL_EXPORT_END
 
@@ -214,5 +223,7 @@ const rb_callable_method_entry_t *rb_method_entry_complement_defined_class(const
 void rb_method_entry_copy(rb_method_entry_t *dst, const rb_method_entry_t *src);
 
 void rb_scope_visibility_set(rb_method_visibility_t);
+
+VALUE rb_unnamed_parameters(int arity);
 
 #endif /* RUBY_METHOD_H */

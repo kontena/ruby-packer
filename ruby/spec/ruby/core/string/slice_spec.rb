@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
 
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes.rb', __FILE__)
-require File.expand_path('../shared/slice.rb', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/classes'
+require_relative 'shared/slice'
 
 describe "String#slice" do
   it_behaves_like :string_slice, :slice
@@ -53,10 +53,10 @@ describe "String#slice! with index" do
     a.should == "hello"
   end
 
-  it "raises a RuntimeError if self is frozen" do
-    lambda { "hello".freeze.slice!(1)  }.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(10) }.should raise_error(RuntimeError)
-    lambda { "".freeze.slice!(0)       }.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} if self is frozen" do
+    lambda { "hello".freeze.slice!(1)  }.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(10) }.should raise_error(frozen_error_class)
+    lambda { "".freeze.slice!(0)       }.should raise_error(frozen_error_class)
   end
 
   it "calls to_int on index" do
@@ -75,9 +75,9 @@ describe "String#slice! with index" do
   with_feature :encoding do
 
     it "returns the character given by the character index" do
-      "hellö there".send(@method, 1).should == "e"
-      "hellö there".send(@method, 4).should == "ö"
-      "hellö there".send(@method, 6).should == "t"
+      "hellö there".slice!(1).should == "e"
+      "hellö there".slice!(4).should == "ö"
+      "hellö there".slice!(6).should == "t"
     end
 
   end
@@ -119,14 +119,14 @@ describe "String#slice! with index, length" do
     a.should == "hello"
   end
 
-  it "raises a RuntimeError if self is frozen" do
-    lambda { "hello".freeze.slice!(1, 2)  }.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(10, 3) }.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(-10, 3)}.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(4, -3) }.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(10, 3) }.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(-10, 3)}.should raise_error(RuntimeError)
-    lambda { "hello".freeze.slice!(4, -3) }.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} if self is frozen" do
+    lambda { "hello".freeze.slice!(1, 2)  }.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(10, 3) }.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(-10, 3)}.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(4, -3) }.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(10, 3) }.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(-10, 3)}.should raise_error(frozen_error_class)
+    lambda { "hello".freeze.slice!(4, -3) }.should raise_error(frozen_error_class)
   end
 
   it "calls to_int on idx and length" do
@@ -151,15 +151,15 @@ describe "String#slice! with index, length" do
   with_feature :encoding do
 
     it "returns the substring given by the character offsets" do
-      "hellö there".send(@method, 1,0).should == ""
-      "hellö there".send(@method, 1,3).should == "ell"
-      "hellö there".send(@method, 1,6).should == "ellö t"
-      "hellö there".send(@method, 1,9).should == "ellö ther"
+      "hellö there".slice!(1,0).should == ""
+      "hellö there".slice!(1,3).should == "ell"
+      "hellö there".slice!(1,6).should == "ellö t"
+      "hellö there".slice!(1,9).should == "ellö ther"
     end
 
     it "treats invalid bytes as single bytes" do
       xE6xCB = [0xE6,0xCB].pack('CC').force_encoding('utf-8')
-      "a#{xE6xCB}b".send(@method, 1, 2).should == xE6xCB
+      "a#{xE6xCB}b".slice!(1, 2).should == xE6xCB
     end
   end
 end
@@ -239,24 +239,24 @@ describe "String#slice! Range" do
   with_feature :encoding do
 
     it "returns the substring given by the character offsets of the range" do
-      "hellö there".send(@method, 1..1).should == "e"
-      "hellö there".send(@method, 1..3).should == "ell"
-      "hellö there".send(@method, 1...3).should == "el"
-      "hellö there".send(@method, -4..-2).should == "her"
-      "hellö there".send(@method, -4...-2).should == "he"
-      "hellö there".send(@method, 5..-1).should == " there"
-      "hellö there".send(@method, 5...-1).should == " ther"
+      "hellö there".slice!(1..1).should == "e"
+      "hellö there".slice!(1..3).should == "ell"
+      "hellö there".slice!(1...3).should == "el"
+      "hellö there".slice!(-4..-2).should == "her"
+      "hellö there".slice!(-4...-2).should == "he"
+      "hellö there".slice!(5..-1).should == " there"
+      "hellö there".slice!(5...-1).should == " ther"
     end
 
   end
 
-  it "raises a RuntimeError on a frozen instance that is modified" do
-    lambda { "hello".freeze.slice!(1..3)  }.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} on a frozen instance that is modified" do
+    lambda { "hello".freeze.slice!(1..3)  }.should raise_error(frozen_error_class)
   end
 
   # see redmine #1551
-  it "raises a RuntimeError on a frozen instance that would not be modified" do
-    lambda { "hello".freeze.slice!(10..20)}.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} on a frozen instance that would not be modified" do
+    lambda { "hello".freeze.slice!(10..20)}.should raise_error(frozen_error_class)
   end
 end
 
@@ -307,8 +307,8 @@ describe "String#slice! with Regexp" do
 
   with_feature :encoding do
     it "returns the matching portion of self with a multi byte character" do
-      "hëllo there".send(@method, /[ë](.)\1/).should == "ëll"
-      "".send(@method, //).should == ""
+      "hëllo there".slice!(/[ë](.)\1/).should == "ëll"
+      "".slice!(//).should == ""
     end
   end
 
@@ -320,12 +320,12 @@ describe "String#slice! with Regexp" do
     $~.should == nil
   end
 
-  it "raises a RuntimeError on a frozen instance that is modified" do
-    lambda { "this is a string".freeze.slice!(/s.*t/) }.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} on a frozen instance that is modified" do
+    lambda { "this is a string".freeze.slice!(/s.*t/) }.should raise_error(frozen_error_class)
   end
 
-  it "raises a RuntimeError on a frozen instance that would not be modified" do
-    lambda { "this is a string".freeze.slice!(/zzz/)  }.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} on a frozen instance that would not be modified" do
+    lambda { "this is a string".freeze.slice!(/zzz/)  }.should raise_error(frozen_error_class)
   end
 end
 
@@ -391,13 +391,13 @@ describe "String#slice! with Regexp, index" do
 
   with_feature :encoding do
     it "returns the encoding aware capture for the given index" do
-      "hår".send(@method, /(.)(.)(.)/, 0).should == "hår"
-      "hår".send(@method, /(.)(.)(.)/, 1).should == "h"
-      "hår".send(@method, /(.)(.)(.)/, 2).should == "å"
-      "hår".send(@method, /(.)(.)(.)/, 3).should == "r"
-      "hår".send(@method, /(.)(.)(.)/, -1).should == "r"
-      "hår".send(@method, /(.)(.)(.)/, -2).should == "å"
-      "hår".send(@method, /(.)(.)(.)/, -3).should == "h"
+      "hår".slice!(/(.)(.)(.)/, 0).should == "hår"
+      "hår".slice!(/(.)(.)(.)/, 1).should == "h"
+      "hår".slice!(/(.)(.)(.)/, 2).should == "å"
+      "hår".slice!(/(.)(.)(.)/, 3).should == "r"
+      "hår".slice!(/(.)(.)(.)/, -1).should == "r"
+      "hår".slice!(/(.)(.)(.)/, -2).should == "å"
+      "hår".slice!(/(.)(.)(.)/, -3).should == "h"
     end
   end
 
@@ -412,10 +412,10 @@ describe "String#slice! with Regexp, index" do
     $~.should == nil
   end
 
-  it "raises a RuntimeError if self is frozen" do
-    lambda { "this is a string".freeze.slice!(/s.*t/)  }.should raise_error(RuntimeError)
-    lambda { "this is a string".freeze.slice!(/zzz/, 0)}.should raise_error(RuntimeError)
-    lambda { "this is a string".freeze.slice!(/(.)/, 2)}.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} if self is frozen" do
+    lambda { "this is a string".freeze.slice!(/s.*t/)  }.should raise_error(frozen_error_class)
+    lambda { "this is a string".freeze.slice!(/zzz/, 0)}.should raise_error(frozen_error_class)
+    lambda { "this is a string".freeze.slice!(/(.)/, 2)}.should raise_error(frozen_error_class)
   end
 end
 
@@ -468,9 +468,9 @@ describe "String#slice! with String" do
     r.should be_an_instance_of(StringSpecs::MyString)
   end
 
-  it "raises a RuntimeError if self is frozen" do
-    lambda { "hello hello".freeze.slice!('llo')     }.should raise_error(RuntimeError)
-    lambda { "this is a string".freeze.slice!('zzz')}.should raise_error(RuntimeError)
-    lambda { "this is a string".freeze.slice!('zzz')}.should raise_error(RuntimeError)
+  it "raises a #{frozen_error_class} if self is frozen" do
+    lambda { "hello hello".freeze.slice!('llo')     }.should raise_error(frozen_error_class)
+    lambda { "this is a string".freeze.slice!('zzz')}.should raise_error(frozen_error_class)
+    lambda { "this is a string".freeze.slice!('zzz')}.should raise_error(frozen_error_class)
   end
 end

@@ -23,6 +23,10 @@
    (RUBY_VERSION_MAJOR == (major) && RUBY_VERSION_MINOR < (minor)) || \
    (RUBY_VERSION_MAJOR == (major) && RUBY_VERSION_MINOR == (minor) && RUBY_VERSION_TEENY < (teeny)))
 
+#if RUBY_VERSION_MAJOR > 2 || (RUBY_VERSION_MAJOR == 2 && RUBY_VERSION_MINOR >= 6)
+#define RUBY_VERSION_IS_2_6
+#endif
+
 #if RUBY_VERSION_MAJOR > 2 || (RUBY_VERSION_MAJOR == 2 && RUBY_VERSION_MINOR >= 4)
 #define RUBY_VERSION_IS_2_4
 #endif
@@ -204,7 +208,9 @@
 #define HAVE_RB_DEFAULT_INTERNAL_ENCODING  1
 #define HAVE_RB_DEFAULT_EXTERNAL_ENCODING  1
 
-#define HAVE_RB_ENCDB_ALIAS                1
+#ifdef RUBY_VERSION_IS_2_6
+#define HAVE_RB_ENC_ALIAS                  1
+#endif
 #define HAVE_RB_ENC_ASSOCIATE              1
 #define HAVE_RB_ENC_ASSOCIATE_INDEX        1
 #define HAVE_RB_ENC_CODEPOINT_LEN          1
@@ -252,6 +258,7 @@
 
 /* Enumerable */
 #define HAVE_RB_ENUMERATORIZE              1
+#define HAVE_RB_ENUMERATORIZE_WITH_SIZE    1
 
 /* Exception */
 #define HAVE_RB_EXC_NEW                    1
@@ -348,6 +355,7 @@
 #define HAVE_RB_ENSURE                     1
 #define HAVE_RB_EVAL_STRING                1
 #define HAVE_RB_EXEC_RECURSIVE             1
+#define HAVE_RB_FRAME_THIS_FUNC             1
 #define HAVE_RB_F_SPRINTF                  1
 #define HAVE_RB_NEED_BLOCK                 1
 #define HAVE_RB_RAISE                      1
@@ -409,8 +417,10 @@
 #define HAVE_NUM2CHR                       1
 #define HAVE_RB_CMPINT                     1
 #define HAVE_RB_INT2INUM                   1
+#define HAVE_RB_UINT2INUM                  1
 #define HAVE_RB_INTEGER                    1
 #define HAVE_RB_LL2INUM                    1
+#define HAVE_RB_ULL2INUM                   1
 #define HAVE_RB_NUM2DBL                    1
 #if SIZEOF_INT < SIZEOF_LONG
 #define HAVE_RB_NUM2INT                    1
@@ -561,6 +571,7 @@
 #define HAVE_RB_VSPRINTF                   1
 #define HAVE_RB_STRING                     1
 #define HAVE_SAFE_STRING_VALUE             1
+#define HAVE_RB_STRING_VALUE_CSTR          1
 
 /* Struct */
 #define HAVE_RB_STRUCT_AREF                1

@@ -2,7 +2,7 @@
 
   insnhelper.h - helper macros to implement each instructions
 
-  $Author: ko1 $
+  $Author: k0kubun $
   created at: 04/01/01 15:50:34 JST
 
   Copyright (C) 2004-2007 Koichi Sasada
@@ -14,10 +14,10 @@
 
 RUBY_SYMBOL_EXPORT_BEGIN
 
-extern VALUE ruby_vm_const_missing_count;
-extern rb_serial_t ruby_vm_global_method_state;
-extern rb_serial_t ruby_vm_global_constant_state;
-extern rb_serial_t ruby_vm_class_serial;
+RUBY_EXTERN VALUE ruby_vm_const_missing_count;
+RUBY_EXTERN rb_serial_t ruby_vm_global_method_state;
+RUBY_EXTERN rb_serial_t ruby_vm_global_constant_state;
+RUBY_EXTERN rb_serial_t ruby_vm_class_serial;
 
 RUBY_SYMBOL_EXPORT_END
 
@@ -35,6 +35,17 @@ RUBY_SYMBOL_EXPORT_END
 /**********************************************************/
 /* deal with stack                                        */
 /**********************************************************/
+
+static inline int
+rb_obj_hidden_p(VALUE obj)
+{
+    if (SPECIAL_CONST_P(obj)) {
+        return FALSE;
+    }
+    else {
+        return RBASIC_CLASS(obj) ? FALSE : TRUE;
+    }
+}
 
 #define PUSH(x) (SET_SV(x), INC_SP(1))
 #define TOPN(n) (*(GET_SP()-(n)-1))
@@ -66,11 +77,11 @@ enum vm_regan_regtype {
     VM_REGAN_EP = 2,
     VM_REGAN_CFP = 3,
     VM_REGAN_SELF = 4,
-    VM_REGAN_ISEQ = 5,
+    VM_REGAN_ISEQ = 5
 };
 enum vm_regan_acttype {
     VM_REGAN_ACT_GET = 0,
-    VM_REGAN_ACT_SET = 1,
+    VM_REGAN_ACT_SET = 1
 };
 
 #if VM_COLLECT_USAGE_DETAILS
@@ -126,11 +137,36 @@ enum vm_regan_acttype {
 /* deal with control flow 2: method/iterator              */
 /**********************************************************/
 
+#ifdef MJIT_HEADER
+/* When calling ISeq which may catch an exception from JIT-ed code, we should not call
+   mjit_exec directly to prevent the caller frame from being canceled. That's because
+   the caller frame may have stack values in the local variables and the cancelling
+   the caller frame will purge them. But directly calling mjit_exec is faster... */
+#define EXEC_EC_CFP(val) do { \
+    if (ec->cfp->iseq->body->catch_except_p) { \
+        VM_ENV_FLAGS_SET(ec->cfp->ep, VM_FRAME_FLAG_FINISH); \
+        val = vm_exec(ec, TRUE); \
+    } \
+    else if ((val = mjit_exec(ec)) == Qundef) { \
+        VM_ENV_FLAGS_SET(ec->cfp->ep, VM_FRAME_FLAG_FINISH); \
+        val = vm_exec(ec, FALSE); \
+    } \
+} while (0)
+#else
+/* When calling from VM, longjmp in the callee won't purge any JIT-ed caller frames.
+   So it's safe to directly call mjit_exec. */
+#define EXEC_EC_CFP(val) do { \
+    if ((val = mjit_exec(ec)) == Qundef) { \
+        RESTORE_REGS(); \
+        NEXT_INSN(); \
+    } \
+} while (0)
+#endif
+
 #define CALL_METHOD(calling, ci, cc) do { \
     VALUE v = (*(cc)->call)(ec, GET_CFP(), (calling), (ci), (cc)); \
     if (v == Qundef) { \
-	RESTORE_REGS(); \
-	NEXT_INSN(); \
+        EXEC_EC_CFP(val); \
     } \
     else { \
 	val = v; \
@@ -141,17 +177,9 @@ enum vm_regan_acttype {
  * because inline method cache does not care about receiver.
  */
 
-#ifndef OPT_CALL_FASTPATH
-#define OPT_CALL_FASTPATH 1
-#endif
-
-#if OPT_CALL_FASTPATH
-#define CI_SET_FASTPATH(cc, func, enabled) do { \
+#define CC_SET_FASTPATH(cc, func, enabled) do { \
     if (LIKELY(enabled)) ((cc)->call = (func)); \
 } while (0)
-#else
-#define CI_SET_FASTPATH(ci, func, enabled) /* do nothing */
-#endif
 
 #define GET_BLOCK_HANDLER() (GET_LEP()[VM_ENV_DATA_INDEX_SPECVAL])
 
@@ -159,6 +187,25 @@ enum vm_regan_acttype {
 /* deal with control flow 3: exception                    */
 /**********************************************************/
 
+
+/**********************************************************/
+/* deal with stack canary                                 */
+/**********************************************************/
+
+#if VM_CHECK_MODE > 0
+#define SETUP_CANARY() \
+    if (leaf) { \
+        canary = GET_SP(); \
+        SET_SV(vm_stack_canary); \
+    }
+#define CHECK_CANARY() \
+    if (leaf && (*canary != vm_stack_canary)) { \
+        vm_canary_is_found_dead(INSN_ATTR(bin), *canary); \
+    }
+#else
+#define SETUP_CANARY()          /* void */
+#define CHECK_CANARY()          /* void */
+#endif
 
 /**********************************************************/
 /* others                                                 */
@@ -178,13 +225,15 @@ enum vm_regan_acttype {
 #define USE_IC_FOR_SPECIALIZED_METHOD 1
 #endif
 
-#define CALL_SIMPLE_METHOD(recv_) do { \
-    struct rb_calling_info calling; \
-    calling.block_handler = VM_BLOCK_HANDLER_NONE; \
-    calling.argc = ci->orig_argc; \
-    vm_search_method(ci, cc, calling.recv = (recv_)); \
-    CALL_METHOD(&calling, ci, cc); \
+#ifndef MJIT_HEADER
+#define CALL_SIMPLE_METHOD() do { \
+    rb_snum_t x = leaf ? INSN_ATTR(width) : 0; \
+    rb_snum_t y = attr_width_opt_send_without_block(0, 0); \
+    rb_snum_t z = x - y; \
+    ADD_PC(z); \
+    DISPATCH_ORIGINAL_INSN(opt_send_without_block); \
 } while (0)
+#endif
 
 #define NEXT_CLASS_SERIAL() (++ruby_vm_class_serial)
 #define GET_GLOBAL_METHOD_STATE() (ruby_vm_global_method_state)
@@ -192,8 +241,12 @@ enum vm_regan_acttype {
 #define GET_GLOBAL_CONSTANT_STATE() (ruby_vm_global_constant_state)
 #define INC_GLOBAL_CONSTANT_STATE() (++ruby_vm_global_constant_state)
 
-static VALUE make_no_method_exception(VALUE exc, VALUE format, VALUE obj,
-				      int argc, const VALUE *argv, int priv);
+extern rb_method_definition_t *rb_method_definition_create(rb_method_type_t type, ID mid);
+extern void rb_method_definition_set(const rb_method_entry_t *me, rb_method_definition_t *def, void *opts);
+extern int rb_method_definition_eq(const rb_method_definition_t *d1, const rb_method_definition_t *d2);
+
+extern VALUE rb_make_no_method_exception(VALUE exc, VALUE format, VALUE obj,
+					 int argc, const VALUE *argv, int priv);
 
 static inline struct vm_throw_data *
 THROW_DATA_NEW(VALUE val, const rb_control_frame_t *cf, VALUE st)
@@ -251,5 +304,13 @@ THROW_DATA_CONSUMED_SET(struct vm_throw_data *obj)
 	obj->flags |= THROW_DATA_CONSUMED;
     }
 }
+
+#define IS_ARGS_SPLAT(ci)   ((ci)->flag & VM_CALL_ARGS_SPLAT)
+#define IS_ARGS_KEYWORD(ci) ((ci)->flag & VM_CALL_KWARG)
+
+#define CALLER_SETUP_ARG(cfp, calling, ci) do { \
+    if (UNLIKELY(IS_ARGS_SPLAT(ci))) vm_caller_setup_arg_splat((cfp), (calling)); \
+    if (UNLIKELY(IS_ARGS_KEYWORD(ci))) vm_caller_setup_arg_kw((cfp), (calling), (ci)); \
+} while (0)
 
 #endif /* RUBY_INSNHELPER_H */

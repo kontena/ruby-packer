@@ -2,7 +2,7 @@
 
   eval.c -
 
-  $Author: ko1 $
+  $Author: knu $
   created at: Thu Jun 10 14:22:17 JST 1993
 
   Copyright (C) 1993-2007 Yukihiro Matsumoto
@@ -17,7 +17,12 @@
 #include "gc.h"
 #include "ruby/vm.h"
 #include "vm_core.h"
+#include "mjit.h"
+#include "probes.h"
 #include "probes_helper.h"
+#ifdef HAVE_SYS_PRCTL_H
+#include <sys/prctl.h>
+#endif
 
 NORETURN(void rb_raise_jump(VALUE, VALUE));
 
@@ -25,9 +30,8 @@ VALUE rb_eLocalJumpError;
 VALUE rb_eSysStackError;
 
 ID ruby_static_id_signo, ruby_static_id_status;
-static ID id_cause;
-#define id_signo ruby_static_id_signo
-#define id_status ruby_static_id_status
+extern ID ruby_static_id_cause;
+#define id_cause ruby_static_id_cause
 
 #define exception_error GET_VM()->special_exceptions[ruby_error_reenter]
 
@@ -52,8 +56,17 @@ ruby_setup(void)
 	return 0;
 
     ruby_init_stack((void *)&state);
+
+    /*
+     * Disable THP early before mallocs happen because we want this to
+     * affect as many future pages as possible for CoW-friendliness
+     */
+#if defined(__linux__) && defined(PR_SET_THP_DISABLE)
+    prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+#endif
     Init_BareVM();
     Init_heap();
+    rb_vm_encoded_insn_data_table_init();
     Init_vm_objects();
 
     EC_PUSH_TAG(GET_EC());
@@ -175,7 +188,7 @@ ruby_cleanup(volatile int ex)
 
       step_0: step++;
 	errs[1] = th->ec->errinfo;
-	th->ec->safe_level = 0;
+	rb_set_safe_level_force(0);
 	ruby_init_stack(&errs[STACK_UPPER(errs, 0, 1)]);
 
 	SAVE_ROOT_JMPBUF(th, ruby_finalize_0());
@@ -219,6 +232,8 @@ ruby_cleanup(volatile int ex)
 	    sysex = EXIT_FAILURE;
 	}
     }
+
+    mjit_finish(TRUE); /* We still need ISeqs here. */
 
     ruby_finalize_1();
 
@@ -401,7 +416,7 @@ rb_mod_s_constants(int argc, VALUE *argv, VALUE mod)
  * \ingroup class
  */
 void
-rb_frozen_class_p(VALUE klass)
+rb_class_modify_check(VALUE klass)
 {
     if (SPECIAL_CONST_P(klass)) {
       noclass:
@@ -476,6 +491,7 @@ static inline VALUE
 exc_setup_message(const rb_execution_context_t *ec, VALUE mesg, VALUE *cause)
 {
     int nocause = 0;
+    int nocircular = 0;
 
     if (NIL_P(mesg)) {
 	mesg = ec->errinfo;
@@ -485,14 +501,31 @@ exc_setup_message(const rb_execution_context_t *ec, VALUE mesg, VALUE *cause)
     if (NIL_P(mesg)) {
 	mesg = rb_exc_new(rb_eRuntimeError, 0, 0);
 	nocause = 0;
+        nocircular = 1;
     }
     if (*cause == Qundef) {
 	if (nocause) {
 	    *cause = Qnil;
+            nocircular = 1;
 	}
 	else if (!rb_ivar_defined(mesg, id_cause)) {
 	    *cause = get_ec_errinfo(ec);
 	}
+        else {
+            nocircular = 1;
+        }
+    }
+    else if (!NIL_P(*cause) && !rb_obj_is_kind_of(*cause, rb_eException)) {
+        rb_raise(rb_eTypeError, "exception object expected");
+    }
+
+    if (!nocircular && !NIL_P(*cause) && *cause != Qundef && *cause != mesg) {
+        VALUE c = *cause;
+        while (!NIL_P(c = rb_attr_get(c, id_cause))) {
+            if (c == mesg) {
+                rb_raise(rb_eArgError, "circular causes");
+            }
+        }
     }
     return mesg;
 }
@@ -516,7 +549,7 @@ setup_exception(rb_execution_context_t *ec, int tag, volatile VALUE mesg, VALUE 
 		    mesg = rb_obj_dup(mesg);
 		}
 	    }
-	    if (cause != Qundef) {
+            if (cause != Qundef && !THROW_DATA_P(cause)) {
 		exc_setup_cause(mesg, cause);
 	    }
 	    if (NIL_P(bt)) {
@@ -643,7 +676,7 @@ rb_exc_fatal(VALUE mesg)
 void
 rb_interrupt(void)
 {
-    rb_raise(rb_eInterrupt, "%s", "");
+    rb_exc_raise(rb_exc_new(rb_eInterrupt, 0, 0));
 }
 
 enum {raise_opt_cause, raise_max_opt}; /*< \private */
@@ -673,11 +706,11 @@ extract_raise_opts(int argc, const VALUE *argv, VALUE *opts)
 /*
  *  call-seq:
  *     raise
- *     raise(string)
- *     raise(exception [, string [, array]])
+ *     raise(string, cause: $!)
+ *     raise(exception [, string [, array]], cause: $!)
  *     fail
- *     fail(string)
- *     fail(exception [, string [, array]])
+ *     fail(string, cause: $!)
+ *     fail(exception [, string [, array]], cause: $!)
  *
  *  With no arguments, raises the exception in <code>$!</code> or raises
  *  a <code>RuntimeError</code> if <code>$!</code> is +nil+.
@@ -692,6 +725,11 @@ extract_raise_opts(int argc, const VALUE *argv, VALUE *opts)
  *
  *     raise "Failed to create socket"
  *     raise ArgumentError, "No parameters", caller
+ *
+ *  The +cause+ of the generated exception is automatically set to the
+ *  "current" exception (<code>$!</code>) if any.  An alternative
+ *  value, either an +Exception+ object or +nil+, can be specified via
+ *  the +:cause+ argument.
  */
 
 static VALUE
@@ -713,7 +751,7 @@ rb_f_raise(int argc, VALUE *argv)
     }
     rb_raise_jump(rb_make_exception(argc, argv), *cause);
 
-    UNREACHABLE;
+    UNREACHABLE_RETURN(Qnil);
 }
 
 static VALUE
@@ -1937,5 +1975,4 @@ Init_eval(void)
 
     id_signo = rb_intern_const("signo");
     id_status = rb_intern_const("status");
-    id_cause = rb_intern_const("cause");
 }

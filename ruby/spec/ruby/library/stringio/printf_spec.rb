@@ -1,6 +1,6 @@
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes', __FILE__)
-require File.expand_path('../../../core/kernel/shared/sprintf', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/classes'
+require_relative '../../core/kernel/shared/sprintf'
 
 describe "StringIO#printf" do
   before :each do
@@ -68,4 +68,3 @@ describe "StringIO#printf when self is not writable" do
     lambda { io.printf("test") }.should raise_error(IOError)
   end
 end
-

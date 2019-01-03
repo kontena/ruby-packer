@@ -10,7 +10,7 @@
 # All rights reserved.  You can redistribute and/or modify it under the same
 # terms as Ruby.
 #
-#   $Id: set.rb 60881 2017-11-22 21:13:51Z stomar $
+#   $Id: set.rb 62575 2018-02-25 13:52:07Z eregon $
 #
 # == Overview
 #
@@ -423,6 +423,9 @@ class Set
     keep_if(&block)
     self if size != n
   end
+
+  # Equivalent to Set#select!
+  alias filter! select!
 
   # Merges the elements of the given enumerable object to the set and
   # returns self.

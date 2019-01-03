@@ -1,5 +1,5 @@
-require File.expand_path('../../../../spec_helper', __FILE__)
-require File.expand_path('../../fixtures/classes', __FILE__)
+require_relative '../../../spec_helper'
+require_relative '../fixtures/classes'
 
 # Describes Numeric#step shared specs between different argument styles.
 # To be able to do it, the @step_args var must contain a Proc that transforms
@@ -258,19 +258,24 @@ describe :numeric_step, :shared => true do
   end
 
   describe "when no block is given" do
-    it "returns an Enumerator when step is 0" do
-      1.send(@method, *@step_args.call(2, 0)).should be_an_instance_of(Enumerator)
+    step_enum_class = Enumerator
+    ruby_version_is "2.6" do
+      step_enum_class = Enumerator::ArithmeticSequence
     end
 
-    it "returns an Enumerator when not passed a block and self > stop" do
-      1.send(@method, *@step_args.call(0, 2)).should be_an_instance_of(Enumerator)
+    it "returns an #{step_enum_class} when step is 0" do
+      1.send(@method, *@step_args.call(2, 0)).should be_an_instance_of(step_enum_class)
     end
 
-    it "returns an Enumerator when not passed a block and self < stop" do
-      1.send(@method, *@step_args.call(2, 3)).should be_an_instance_of(Enumerator)
+    it "returns an #{step_enum_class} when not passed a block and self > stop" do
+      1.send(@method, *@step_args.call(0, 2)).should be_an_instance_of(step_enum_class)
     end
 
-    it "returns an Enumerator that uses the given step" do
+    it "returns an #{step_enum_class} when not passed a block and self < stop" do
+      1.send(@method, *@step_args.call(2, 3)).should be_an_instance_of(step_enum_class)
+    end
+
+    it "returns an #{step_enum_class} that uses the given step" do
       0.send(@method, *@step_args.call(5, 2)).to_a.should eql [0, 2, 4]
     end
 

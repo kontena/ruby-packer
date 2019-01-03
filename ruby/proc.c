@@ -2,7 +2,7 @@
 
   proc.c - Proc, Binding, Env
 
-  $Author: naruse $
+  $Author: stomar $
   created at: Wed Jan 17 12:13:14 2007
 
   Copyright (C) 2004-2007 Koichi Sasada
@@ -12,6 +12,7 @@
 #include "eval_intern.h"
 #include "internal.h"
 #include "gc.h"
+#include "vm_core.h"
 #include "iseq.h"
 
 /* Proc.new with no block will raise an exception in the future
@@ -123,28 +124,11 @@ rb_obj_is_proc(VALUE proc)
     }
 }
 
-VALUE rb_proc_create(VALUE klass, const struct rb_block *block,
-		     int8_t safe_level, int8_t is_from_method, int8_t is_lambda);
-
-/* :nodoc: */
-static VALUE
-proc_dup(VALUE self)
-{
-    VALUE procval;
-    rb_proc_t *src;
-
-    GetProcPtr(self, src);
-    procval = rb_proc_create(rb_cProc, &src->block,
-			     src->safe_level, src->is_from_method, src->is_lambda);
-    RB_GC_GUARD(self); /* for: body = proc_dup(body) */
-    return procval;
-}
-
 /* :nodoc: */
 static VALUE
 proc_clone(VALUE self)
 {
-    VALUE procval = proc_dup(self);
+    VALUE procval = rb_proc_dup(self);
     CLONESETUP(procval, self);
     return procval;
 }
@@ -611,6 +595,24 @@ bind_receiver(VALUE bindval)
     return vm_block_self(&bind->block);
 }
 
+/*
+ *  call-seq:
+ *     binding.source_location  -> [String, Integer]
+ *
+ *  Returns the Ruby source filename and line number of the binding object.
+ */
+static VALUE
+bind_location(VALUE bindval)
+{
+    VALUE loc[2];
+    const rb_binding_t *bind;
+    GetBindingPtr(bindval, bind);
+    loc[0] = pathobj_path(bind->pathobj);
+    loc[1] = INT2FIX(bind->first_lineno);
+
+    return rb_ary_new4(2, loc);
+}
+
 static VALUE
 cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
 {
@@ -675,7 +677,7 @@ rb_vm_ifunc_new(VALUE (*func)(ANYARGS), const void *data, int min_argc, int max_
     return IFUNC_NEW(func, data, arity.packed);
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_func_proc_new(rb_block_call_func_t func, VALUE val)
 {
     struct vm_ifunc *ifunc = rb_vm_ifunc_proc_new(func, (void *)val);
@@ -704,13 +706,6 @@ proc_new(VALUE klass, int8_t is_lambda)
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
 	if ((block_handler = rb_vm_frame_block_handler(cfp)) != VM_BLOCK_HANDLER_NONE) {
-	    const VALUE *lep = rb_vm_ep_local_ep(cfp->ep);
-
-	    if (VM_ENV_ESCAPED_P(lep)) {
-		procval = VM_ENV_PROCVAL(lep);
-		goto return_existing_proc;
-	    }
-
 	    if (is_lambda) {
 		rb_warn(proc_without_block);
 	    }
@@ -728,13 +723,12 @@ proc_new(VALUE klass, int8_t is_lambda)
       case block_handler_type_proc:
 	procval = VM_BH_TO_PROC(block_handler);
 
-      return_existing_proc:
 	if (RBASIC_CLASS(procval) == klass) {
 	    return procval;
 	}
 	else {
-	    VALUE newprocval = proc_dup(procval);
-	    RBASIC_SET_CLASS(newprocval, klass);
+	    VALUE newprocval = rb_proc_dup(procval);
+            RBASIC_SET_CLASS(newprocval, klass);
 	    return newprocval;
 	}
 	break;
@@ -806,22 +800,22 @@ rb_block_lambda(void)
     return proc_new(rb_cProc, TRUE);
 }
 
-/*  Document-method: ===
+/*  Document-method: Proc#===
  *
  *  call-seq:
  *     proc === obj   -> result_of_proc
  *
- *  Invokes the block with +obj+ as the proc's parameter like Proc#call.  It
- *  is to allow a proc object to be a target of +when+ clause in a case
- *  statement.
+ *  Invokes the block with +obj+ as the proc's parameter like Proc#call.
+ *  This allows a proc object to be the target of a +when+ clause
+ *  in a case statement.
  */
 
 /* CHECKME: are the argument checking semantics correct? */
 
 /*
- *  Document-method: []
- *  Document-method: call
- *  Document-method: yield
+ *  Document-method: Proc#[]
+ *  Document-method: Proc#call
+ *  Document-method: Proc#yield
  *
  *  call-seq:
  *     prc.call(params,...)   -> obj
@@ -1154,8 +1148,8 @@ rb_proc_location(VALUE self)
     return iseq_location(rb_proc_get_iseq(self, 0));
 }
 
-static VALUE
-unnamed_parameters(int arity)
+VALUE
+rb_unnamed_parameters(int arity)
 {
     VALUE a, param = rb_ary_new2((arity < 0) ? -arity : arity);
     int n = (arity < 0) ? ~arity : arity;
@@ -1189,7 +1183,7 @@ rb_proc_parameters(VALUE self)
     int is_proc;
     const rb_iseq_t *iseq = rb_proc_get_iseq(self, &is_proc);
     if (!iseq) {
-	return unnamed_parameters(rb_proc_arity(self));
+	return rb_unnamed_parameters(rb_proc_arity(self));
     }
     return rb_iseq_parameters(iseq, is_proc);
 }
@@ -1204,7 +1198,7 @@ rb_hash_proc(st_index_t hash, VALUE prc)
     return rb_hash_uint(hash, (st_index_t)proc->block.as.captured.ep >> 16);
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_sym_to_proc(VALUE sym)
 {
     static VALUE sym_proc_cache = Qfalse;
@@ -1212,7 +1206,6 @@ rb_sym_to_proc(VALUE sym)
     VALUE proc;
     long index;
     ID id;
-    VALUE *aryp;
 
     if (!sym_proc_cache) {
 	sym_proc_cache = rb_ary_tmp_new(SYM_PROC_CACHE_SIZE * 2);
@@ -1223,14 +1216,13 @@ rb_sym_to_proc(VALUE sym)
     id = SYM2ID(sym);
     index = (id % SYM_PROC_CACHE_SIZE) << 1;
 
-    aryp = RARRAY_PTR(sym_proc_cache);
-    if (aryp[index] == sym) {
-	return aryp[index + 1];
+    if (RARRAY_AREF(sym_proc_cache, index) == sym) {
+        return RARRAY_AREF(sym_proc_cache, index + 1);
     }
     else {
-	proc = sym_proc_new(rb_cProc, ID2SYM(id));
-	aryp[index] = sym;
-	aryp[index + 1] = proc;
+        proc = sym_proc_new(rb_cProc, ID2SYM(id));
+        RARRAY_ASET(sym_proc_cache, index, sym);
+        RARRAY_ASET(sym_proc_cache, index + 1, proc);
 	return proc;
     }
 }
@@ -1277,7 +1269,7 @@ rb_block_to_s(VALUE self, const struct rb_block *block, const char *additional_i
 	rb_str_catf(str, "%p(&%+"PRIsVALUE")", (void *)self, block->as.symbol);
 	break;
       case block_type_ifunc:
-	rb_str_catf(str, "%p", block->as.captured.code.ifunc);
+	rb_str_catf(str, "%p", (void *)block->as.captured.code.ifunc);
 	break;
     }
 
@@ -1490,6 +1482,11 @@ method_entry_defined_class(const rb_method_entry_t *me)
  *     meth.call(9)                 #=> 81
  *     [ 1, 2, 3 ].collect(&meth)   #=> [1, 4, 9]
  *
+ *     [ 1, 2, 3 ].each(&method(:puts)) #=> prints 1, 2, 3
+ *
+ *     require 'date'
+ *     %w[2017-03-01 2017-03-02].collect(&Date.method(:parse))
+ *     #=> [#<Date: 2017-03-01 ((2457814j,0s,0n),+0s,2299161j)>, #<Date: 2017-03-02 ((2457815j,0s,0n),+0s,2299161j)>]
  */
 
 /*
@@ -1584,6 +1581,8 @@ method_unbind(VALUE obj)
  *     meth.receiver    -> object
  *
  *  Returns the bound receiver of the method object.
+ *
+ *    (1..3).method(:map).receiver # => 1..3
  */
 
 static VALUE
@@ -1638,6 +1637,9 @@ method_original_name(VALUE obj)
  *     meth.owner    -> class_or_module
  *
  *  Returns the class or module that defines the method.
+ *  See also receiver.
+ *
+ *    (1..3).method(:map).owner #=> Enumerable
  */
 
 static VALUE
@@ -1651,7 +1653,7 @@ method_owner(VALUE obj)
 void
 rb_method_name_error(VALUE klass, VALUE str)
 {
-#define MSG(s) rb_fstring_cstr("undefined method `%1$s' for"s" `%2$s'")
+#define MSG(s) rb_fstring_lit("undefined method `%1$s' for"s" `%2$s'")
     VALUE c = klass;
     VALUE s;
 
@@ -1720,6 +1722,18 @@ obj_method(VALUE obj, VALUE vid, int scope)
  *     l = Demo.new('Fred')
  *     m = l.method("hello")
  *     m.call   #=> "Hello, @iv = Fred"
+ *
+ *  Note that <code>Method</code> implements <code>to_proc</code> method,
+ *  which means it can be used with iterators.
+ *
+ *     [ 1, 2, 3 ].each(&method(:puts)) # => prints 3 lines to stdout
+ *
+ *     out = File.open('test.txt', 'w')
+ *     [ 1, 2, 3 ].each(&out.method(:puts)) # => prints 3 lines to file
+ *
+ *     require 'date'
+ *     %w[2017-03-01 2017-03-02].collect(&Date.method(:parse))
+ *     #=> [#<Date: 2017-03-01 ((2457814j,0s,0n),+0s,2299161j)>, #<Date: 2017-03-02 ((2457815j,0s,0n),+0s,2299161j)>]
  */
 
 VALUE
@@ -1769,21 +1783,23 @@ VALUE
 rb_obj_singleton_method(VALUE obj, VALUE vid)
 {
     const rb_method_entry_t *me;
-    VALUE klass;
+    VALUE klass = rb_singleton_class_get(obj);
     ID id = rb_check_id(&vid);
 
-    if (!id) {
-	if (!NIL_P(klass = rb_singleton_class_get(obj)) &&
-	    respond_to_missing_p(klass, obj, vid, FALSE)) {
-	    id = rb_intern_str(vid);
-	    return mnew_missing(klass, obj, id, rb_cMethod);
-	}
+    if (NIL_P(klass) || NIL_P(klass = RCLASS_ORIGIN(klass))) {
       undef:
 	rb_name_err_raise("undefined singleton method `%1$s' for `%2$s'",
 			  obj, vid);
     }
-    if (NIL_P(klass = rb_singleton_class_get(obj)) ||
-	UNDEFINED_METHOD_ENTRY_P(me = rb_method_entry_at(klass, id)) ||
+    if (!id) {
+	if (respond_to_missing_p(klass, obj, vid, FALSE)) {
+	    id = rb_intern_str(vid);
+	    return mnew_missing(klass, obj, id, rb_cMethod);
+	}
+	goto undef;
+    }
+    me = rb_method_entry_at(klass, id);
+    if (UNDEFINED_METHOD_ENTRY_P(me) ||
 	UNDEFINED_REFINED_METHOD_P(me->def)) {
 	vid = ID2SYM(id);
 	goto undef;
@@ -1857,16 +1873,14 @@ rb_mod_public_instance_method(VALUE mod, VALUE vid)
  *  Defines an instance method in the receiver. The _method_
  *  parameter can be a +Proc+, a +Method+ or an +UnboundMethod+ object.
  *  If a block is specified, it is used as the method body. This block
- *  is evaluated using <code>instance_eval</code>, a point that is
- *  tricky to demonstrate because <code>define_method</code> is private.
- *  (This is why we resort to the +send+ hack in this example.)
+ *  is evaluated using <code>instance_eval</code>.
  *
  *     class A
  *       def fred
  *         puts "In Fred"
  *       end
  *       def create_method(name, &block)
- *         self.class.send(:define_method, name, &block)
+ *         self.class.define_method(name, &block)
  *       end
  *       define_method(:wilma) { puts "Charge it!" }
  *     end
@@ -1963,7 +1977,7 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 	RB_GC_GUARD(body);
     }
     else {
-	VALUE procval = proc_dup(body);
+	VALUE procval = rb_proc_dup(body);
 	if (vm_proc_iseq(procval) != NULL) {
 	    rb_proc_t *proc;
 	    GetProcPtr(procval, proc);
@@ -2067,6 +2081,24 @@ method_clone(VALUE self)
     RB_OBJ_WRITE(clone, &data->me, rb_method_entry_clone(orig->me));
     return clone;
 }
+
+/*  Document-method: Method#===
+ *
+ *  call-seq:
+ *     method === obj   -> result_of_method
+ *
+ *  Invokes the method with +obj+ as the parameter like #call.
+ *  This allows a method object to be the target of a +when+ clause
+ *  in a case statement.
+ *
+ *      require 'prime'
+ *
+ *      case 1373
+ *      when Prime.method(:prime?)
+ *        # ...
+ *      end
+ */
+
 
 /*
  *  call-seq:
@@ -2310,7 +2342,7 @@ rb_method_entry_min_max_arity(const rb_method_entry_t *me, int *max)
 	def = def->body.alias.original_me->def;
 	goto again;
       case VM_METHOD_TYPE_BMETHOD:
-	return rb_proc_min_max_arity(def->body.proc, max);
+        return rb_proc_min_max_arity(def->body.bmethod.proc, max);
       case VM_METHOD_TYPE_ISEQ:
 	return rb_iseq_min_max_arity(rb_iseq_check(def->body.iseq.iseqptr), max);
       case VM_METHOD_TYPE_UNDEF:
@@ -2327,6 +2359,9 @@ rb_method_entry_min_max_arity(const rb_method_entry_t *me, int *max)
 	  case OPTIMIZED_METHOD_TYPE_CALL:
 	    *max = UNLIMITED_ARGUMENTS;
 	    return 0;
+	  case OPTIMIZED_METHOD_TYPE_BLOCK_CALL:
+	    *max = UNLIMITED_ARGUMENTS;
+	    return 0;
 	  default:
 	    break;
 	}
@@ -2337,7 +2372,7 @@ rb_method_entry_min_max_arity(const rb_method_entry_t *me, int *max)
 	return 0;
     }
     rb_bug("rb_method_entry_min_max_arity: invalid method entry type (%d)", def->type);
-    UNREACHABLE;
+    UNREACHABLE_RETURN(Qnil);
 }
 
 int
@@ -2443,8 +2478,8 @@ rb_obj_method_arity(VALUE obj, ID id)
     return rb_mod_method_arity(CLASS_OF(obj), id);
 }
 
-static inline const rb_method_definition_t *
-method_def(VALUE method)
+const rb_method_definition_t *
+rb_method_def(VALUE method)
 {
     const struct METHOD *data;
 
@@ -2459,7 +2494,7 @@ method_def_iseq(const rb_method_definition_t *def)
       case VM_METHOD_TYPE_ISEQ:
 	return rb_iseq_check(def->body.iseq.iseqptr);
       case VM_METHOD_TYPE_BMETHOD:
-	return rb_proc_get_iseq(def->body.proc, 0);
+        return rb_proc_get_iseq(def->body.bmethod.proc, 0);
       case VM_METHOD_TYPE_ALIAS:
 	return method_def_iseq(def->body.alias.original_me->def);
       case VM_METHOD_TYPE_CFUNC:
@@ -2479,13 +2514,13 @@ method_def_iseq(const rb_method_definition_t *def)
 const rb_iseq_t *
 rb_method_iseq(VALUE method)
 {
-    return method_def_iseq(method_def(method));
+    return method_def_iseq(rb_method_def(method));
 }
 
 static const rb_cref_t *
 method_cref(VALUE method)
 {
-    const rb_method_definition_t *def = method_def(method);
+    const rb_method_definition_t *def = rb_method_def(method);
 
   again:
     switch (def->type) {
@@ -2541,7 +2576,7 @@ rb_obj_method_location(VALUE obj, ID id)
 VALUE
 rb_method_location(VALUE method)
 {
-    return method_def_location(method_def(method));
+    return method_def_location(rb_method_def(method));
 }
 
 /*
@@ -2568,7 +2603,7 @@ rb_method_parameters(VALUE method)
 {
     const rb_iseq_t *iseq = rb_method_iseq(method);
     if (!iseq) {
-	return unnamed_parameters(method_arity(method));
+	return rb_unnamed_parameters(method_arity(method));
     }
     return rb_iseq_parameters(iseq, 0);
 }
@@ -2578,9 +2613,13 @@ rb_method_parameters(VALUE method)
  *   meth.to_s      ->  string
  *   meth.inspect   ->  string
  *
- *  Returns the name of the underlying method.
+ *  Returns a human-readable description of the underlying method.
  *
  *    "cat".method(:count).inspect   #=> "#<Method: String#count>"
+ *    (1..3).method(:map).inspect    #=> "#<Method: Range(Enumerable)#map>"
+ *
+ *  In the latter case, the method description includes the "owner" of the
+ *  original method (+Enumerable+ module, which is included into +Range+).
  */
 
 static VALUE
@@ -2784,9 +2823,7 @@ env_clone(const rb_env_t *env, const rb_cref_t *cref)
  *  call-seq:
  *     prc.binding    -> binding
  *
- *  Returns the binding associated with <i>prc</i>. Note that
- *  <code>Kernel#eval</code> accepts either a <code>Proc</code> or a
- *  <code>Binding</code> object as its second parameter.
+ *  Returns the binding associated with <i>prc</i>.
  *
  *     def fred(param)
  *       proc {}
@@ -2826,12 +2863,15 @@ proc_binding(VALUE self)
 	    const struct vm_ifunc *ifunc = block->as.captured.code.ifunc;
 	    if (IS_METHOD_PROC_IFUNC(ifunc)) {
 		VALUE method = (VALUE)ifunc->data;
+		VALUE name = rb_fstring_lit("<empty_iseq>");
+		rb_iseq_t *empty;
 		binding_self = method_receiver(method);
 		iseq = rb_method_iseq(method);
 		env = VM_ENV_ENVVAL_PTR(block->as.captured.ep);
 		env = env_clone(env, method_cref(method));
 		/* set empty iseq */
-		RB_OBJ_WRITE(env, &env->iseq, rb_iseq_new(NULL, rb_str_new2("<empty iseq>"), rb_str_new2("<empty_iseq>"), Qnil, 0, ISEQ_TYPE_TOP));
+		empty = rb_iseq_new(NULL, name, name, Qnil, 0, ISEQ_TYPE_TOP);
+		RB_OBJ_WRITE(env, &env->iseq, empty);
 		break;
 	    }
 	    else {
@@ -2856,7 +2896,7 @@ proc_binding(VALUE self)
     }
     else {
 	RB_OBJ_WRITE(bindval, &bind->pathobj,
-		     rb_iseq_pathobj_new(rb_fstring_cstr("(binding)"), Qnil));
+		     rb_iseq_pathobj_new(rb_fstring_lit("(binding)"), Qnil));
 	bind->first_lineno = 1;
     }
 
@@ -2953,8 +2993,7 @@ proc_curry(int argc, const VALUE *argv, VALUE self)
     int sarity, max_arity, min_arity = rb_proc_min_max_arity(self, &max_arity);
     VALUE arity;
 
-    rb_scan_args(argc, argv, "01", &arity);
-    if (NIL_P(arity)) {
+    if (rb_check_arity(argc, 0, 1) == 0 || NIL_P(arity = argv[0])) {
 	arity = INT2FIX(min_arity);
     }
     else {
@@ -3006,6 +3045,136 @@ rb_method_curry(int argc, const VALUE *argv, VALUE self)
     return proc_curry(argc, argv, proc);
 }
 
+static VALUE
+compose(VALUE dummy, VALUE args, int argc, VALUE *argv, VALUE passed_proc)
+{
+    VALUE f, g, fargs;
+    f = RARRAY_AREF(args, 0);
+    g = RARRAY_AREF(args, 1);
+
+    if (rb_obj_is_proc(g))
+        fargs = rb_proc_call_with_block(g, argc, argv, passed_proc);
+    else
+        fargs = rb_funcall_with_block(g, idCall, argc, argv, passed_proc);
+
+    if (rb_obj_is_proc(f))
+        return rb_proc_call(f, rb_ary_new3(1, fargs));
+    else
+        return rb_funcallv(f, idCall, 1, &fargs);
+}
+
+/*
+ *  call-seq:
+ *     prc << g -> a_proc
+ *
+ *  Returns a proc that is the composition of this proc and the given <i>g</i>.
+ *  The returned proc takes a variable number of arguments, calls <i>g</i> with them
+ *  then calls this proc with the result.
+ *
+ *     f = proc {|x| x * x }
+ *     g = proc {|x| x + x }
+ *     p (f << g).call(2) #=> 16
+ */
+static VALUE
+proc_compose_to_left(VALUE self, VALUE g)
+{
+    VALUE proc, args, procs[2];
+    rb_proc_t *procp;
+    int is_lambda;
+
+    procs[0] = self;
+    procs[1] = g;
+    args = rb_ary_tmp_new_from_values(0, 2, procs);
+
+    GetProcPtr(self, procp);
+    is_lambda = procp->is_lambda;
+
+    proc = rb_proc_new(compose, args);
+    GetProcPtr(proc, procp);
+    procp->is_lambda = is_lambda;
+
+    return proc;
+}
+
+/*
+ *  call-seq:
+ *     prc >> g -> a_proc
+ *
+ *  Returns a proc that is the composition of this proc and the given <i>g</i>.
+ *  The returned proc takes a variable number of arguments, calls <i>g</i> with them
+ *  then calls this proc with the result.
+ *
+ *     f = proc {|x| x * x }
+ *     g = proc {|x| x + x }
+ *     p (f >> g).call(2) #=> 8
+ */
+static VALUE
+proc_compose_to_right(VALUE self, VALUE g)
+{
+    VALUE proc, args, procs[2];
+    rb_proc_t *procp;
+    int is_lambda;
+
+    procs[0] = g;
+    procs[1] = self;
+    args = rb_ary_tmp_new_from_values(0, 2, procs);
+
+    GetProcPtr(self, procp);
+    is_lambda = procp->is_lambda;
+
+    proc = rb_proc_new(compose, args);
+    GetProcPtr(proc, procp);
+    procp->is_lambda = is_lambda;
+
+    return proc;
+}
+
+/*
+ *  call-seq:
+ *     meth << g -> a_proc
+ *
+ *  Returns a proc that is the composition of this method and the given <i>g</i>.
+ *  The returned proc takes a variable number of arguments, calls <i>g</i> with them
+ *  then calls this method with the result.
+ *
+ *     def f(x)
+ *       x * x
+ *     end
+ *
+ *     f = self.method(:f)
+ *     g = proc {|x| x + x }
+ *     p (f << g).call(2) #=> 16
+ */
+static VALUE
+rb_method_compose_to_left(VALUE self, VALUE g)
+{
+    VALUE proc = method_to_proc(self);
+    return proc_compose_to_left(proc, g);
+}
+
+/*
+ *  call-seq:
+ *     meth >> g -> a_proc
+ *
+ *  Returns a proc that is the composition of this method and the given <i>g</i>.
+ *  The returned proc takes a variable number of arguments, calls <i>g</i> with them
+ *  then calls this method with the result.
+ *
+ *     def f(x)
+ *       x * x
+ *     end
+ *
+ *     f = self.method(:f)
+ *     g = proc {|x| x + x }
+ *     p (f >> g).call(2) #=> 8
+ */
+static VALUE
+rb_method_compose_to_right(VALUE self, VALUE g)
+{
+    VALUE proc = method_to_proc(self);
+    return proc_compose_to_right(proc, g);
+}
+
 /*
  *  Document-class: LocalJumpError
  *
@@ -3050,12 +3219,25 @@ rb_method_curry(int argc, const VALUE *argv, VALUE self)
  */
 
 /*
- *  <code>Proc</code> objects are blocks of code that have been bound to
- *  a set of local variables. Once bound, the code may be called in
- *  different contexts and still access those variables.
+ *  Document-class: Proc
+ *
+ * A +Proc+ object is an encapsulation of a block of code, which can be stored
+ * in a local variable, passed to a method or another Proc, and can be called.
+ * Proc is an essential concept in Ruby and a core of its functional
+ * programming features.
+ *
+ *      square = Proc.new {|x| x**2 }
+ *
+ *      square.call(3)  #=> 9
+ *      # shorthands:
+ *      square.(3)      #=> 9
+ *      square[3]       #=> 9
+ *
+ * Proc objects are _closures_, meaning they remember and can use the entire
+ * context in which they were created.
  *
  *     def gen_times(factor)
- *       return Proc.new {|n| n*factor }
+ *       Proc.new {|n| n*factor } # remembers the value of factor at the moment of creation
  *     end
  *
  *     times3 = gen_times(3)
@@ -3065,17 +3247,170 @@ rb_method_curry(int argc, const VALUE *argv, VALUE self)
  *     times5.call(5)                #=> 25
  *     times3.call(times5.call(4))   #=> 60
  *
+ * == Creation
+ *
+ * There are several methods to create a Proc
+ *
+ * * Use the Proc class constructor:
+ *
+ *      proc1 = Proc.new {|x| x**2 }
+ *
+ * * Use the Kernel#proc method as a shorthand of Proc.new:
+ *
+ *      proc2 = proc {|x| x**2 }
+ *
+ * * Receiving a block of code into proc argument (note the <code>&</code>):
+ *
+ *      def make_proc(&block)
+ *        block
+ *      end
+ *
+ *      proc3 = make_proc {|x| x**2 }
+ *
+ * * Construct a proc with lambda semantics using the Kernel#lambda method
+ *   (see below for explanations about lambdas):
+ *
+ *      lambda1 = lambda {|x| x**2 }
+ *
+ * * Use the Lambda literal syntax (also constructs a proc with lambda semantics):
+ *
+ *      lambda2 = ->(x) { x**2 }
+ *
+ * == Lambda and non-lambda semantics
+ *
+ * Procs are coming in two flavors: lambda and non-lambda (regular procs).
+ * Differences are:
+ *
+ * * In lambdas, +return+ means exit from this lambda;
+ * * In regular procs, +return+ means exit from embracing method
+ *   (and will throw +LocalJumpError+ if invoked outside the method);
+ * * In lambdas, arguments are treated in the same way as in methods: strict,
+ *   with +ArgumentError+ for mismatching argument number,
+ *   and no additional argument processing;
+ * * Regular procs accept arguments more generously: missing arguments
+ *   are filled with +nil+, single Array arguments are deconstructed if the
+ *   proc has multiple arguments, and there is no error raised on extra
+ *   arguments.
+ *
+ * Examples:
+ *
+ *      p = proc {|x, y| "x=#{x}, y=#{y}" }
+ *      p.call(1, 2)      #=> "x=1, y=2"
+ *      p.call([1, 2])    #=> "x=1, y=2", array deconstructed
+ *      p.call(1, 2, 8)   #=> "x=1, y=2", extra argument discarded
+ *      p.call(1)         #=> "x=1, y=", nil substituted instead of error
+ *
+ *      l = lambda {|x, y| "x=#{x}, y=#{y}" }
+ *      l.call(1, 2)      #=> "x=1, y=2"
+ *      l.call([1, 2])    # ArgumentError: wrong number of arguments (given 1, expected 2)
+ *      l.call(1, 2, 8)   # ArgumentError: wrong number of arguments (given 3, expected 2)
+ *      l.call(1)         # ArgumentError: wrong number of arguments (given 1, expected 2)
+ *
+ *      def test_return
+ *        -> { return 3 }.call      # just returns from lambda into method body
+ *        proc { return 4 }.call    # returns from method
+ *        return 5
+ *      end
+ *
+ *      test_return # => 4, return from proc
+ *
+ * Lambdas are useful as self-sufficient functions, in particular useful as
+ * arguments to higher-order functions, behaving exactly like Ruby methods.
+ *
+ * Procs are useful for implementing iterators:
+ *
+ *      def test
+ *        [[1, 2], [3, 4], [5, 6]].map {|a, b| return a if a + b > 10 }
+ *                                  #  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ *      end
+ *
+ * Inside +map+, the block of code is treated as a regular (non-lambda) proc,
+ * which means that the internal arrays will be deconstructed to pairs of
+ * arguments, and +return+ will exit from the method +test+. That would
+ * not be possible with a stricter lambda.
+ *
+ * You can tell a lambda from a regular proc by using the #lambda? instance method.
+ *
+ * Lambda semantics is typically preserved during the proc lifetime, including
+ * <code>&</code>-deconstruction to a block of code:
+ *
+ *      p = proc {|x, y| x }
+ *      l = lambda {|x, y| x }
+ *      [[1, 2], [3, 4]].map(&p) #=> [1, 2]
+ *      [[1, 2], [3, 4]].map(&l) # ArgumentError: wrong number of arguments (given 1, expected 2)
+ *
+ * The only exception is dynamic method definition: even if defined by
+ * passing a non-lambda proc, methods still have normal semantics of argument
+ * checking.
+ *
+ *   class C
+ *     define_method(:e, &proc {})
+ *   end
+ *   C.new.e(1,2)       #=> ArgumentError
+ *   C.new.method(:e).to_proc.lambda?   #=> true
+ *
+ * This exception ensures that methods never have unusual argument passing
+ * conventions, and makes it easy to have wrappers defining methods that
+ * behave as usual.
+ *
+ *   class C
+ *     def self.def2(name, &body)
+ *       define_method(name, &body)
+ *     end
+ *
+ *     def2(:f) {}
+ *   end
+ *   C.new.f(1,2)       #=> ArgumentError
+ *
+ * The wrapper <i>def2</i> receives <code>body</code> as a non-lambda proc,
+ * yet defines a method which has normal semantics.
+ *
+ * == Conversion of other objects to procs
+ *
+ * Any object that implements the +to_proc+ method can be converted into
+ * a proc by the <code>&</code> operator, and therefore con be
+ * consumed by iterators.
+ *
+ *      class Greater
+ *        def initialize(greating)
+ *          @greating = greating
+ *        end
+ *
+ *        def to_proc
+ *          proc {|name| "#{@greating}, #{name}!" }
+ *        end
+ *      end
+ *
+ *      hi = Greater.new("Hi")
+ *      hey = Greater.new("Hey")
+ *      ["Bob", "Jane"].map(&hi)    #=> ["Hi, Bob!", "Hi, Jane!"]
+ *      ["Bob", "Jane"].map(&hey)   #=> ["Hey, Bob!", "Hey, Jane!"]
+ *
+ * Of the Ruby core classes, this method is implemented by Symbol,
+ * Method, and Hash.
+ *
+ *      :to_s.to_proc.call(1)           #=> "1"
+ *      [1, 2].map(&:to_s)              #=> ["1", "2"]
+ *
+ *      method(:puts).to_proc.call(1)   # prints 1
+ *      [1, 2].each(&method(:puts))     # prints 1, 2
+ *
+ *      {test: 1}.to_proc.call(:test)       #=> 1
+ *      %i[test many keys].map(&{test: 1})  #=> [1, nil, nil]
+ *
  */
+
 
 void
 Init_Proc(void)
 {
+#undef rb_intern
     /* Proc */
     rb_cProc = rb_define_class("Proc", rb_cObject);
     rb_undef_alloc_func(rb_cProc);
     rb_define_singleton_method(rb_cProc, "new", rb_proc_s_new, -1);
 
-    rb_add_method(rb_cProc, rb_intern("call"), VM_METHOD_TYPE_OPTIMIZED,
+    rb_add_method(rb_cProc, idCall, VM_METHOD_TYPE_OPTIMIZED,
 		  (void *)OPTIMIZED_METHOD_TYPE_CALL, METHOD_VISI_PUBLIC);
     rb_add_method(rb_cProc, rb_intern("[]"), VM_METHOD_TYPE_OPTIMIZED,
 		  (void *)OPTIMIZED_METHOD_TYPE_CALL, METHOD_VISI_PUBLIC);
@@ -3094,13 +3429,15 @@ Init_Proc(void)
     rb_define_method(rb_cProc, "to_proc", proc_to_proc, 0);
     rb_define_method(rb_cProc, "arity", proc_arity, 0);
     rb_define_method(rb_cProc, "clone", proc_clone, 0);
-    rb_define_method(rb_cProc, "dup", proc_dup, 0);
+    rb_define_method(rb_cProc, "dup", rb_proc_dup, 0);
     rb_define_method(rb_cProc, "hash", proc_hash, 0);
     rb_define_method(rb_cProc, "to_s", proc_to_s, 0);
     rb_define_alias(rb_cProc, "inspect", "to_s");
     rb_define_method(rb_cProc, "lambda?", rb_proc_lambda_p, 0);
     rb_define_method(rb_cProc, "binding", proc_binding, 0);
     rb_define_method(rb_cProc, "curry", proc_curry, -1);
+    rb_define_method(rb_cProc, "<<", proc_compose_to_left, 1);
+    rb_define_method(rb_cProc, ">>", proc_compose_to_right, 1);
     rb_define_method(rb_cProc, "source_location", rb_proc_location, 0);
     rb_define_method(rb_cProc, "parameters", rb_proc_parameters, 0);
 
@@ -3127,6 +3464,8 @@ Init_Proc(void)
     rb_define_method(rb_cMethod, "call", rb_method_call, -1);
     rb_define_method(rb_cMethod, "===", rb_method_call, -1);
     rb_define_method(rb_cMethod, "curry", rb_method_curry, -1);
+    rb_define_method(rb_cMethod, "<<", rb_method_compose_to_left, 1);
+    rb_define_method(rb_cMethod, ">>", rb_method_compose_to_right, 1);
     rb_define_method(rb_cMethod, "[]", rb_method_call, -1);
     rb_define_method(rb_cMethod, "arity", method_arity_m, 0);
     rb_define_method(rb_cMethod, "inspect", method_inspect, 0);
@@ -3224,5 +3563,6 @@ Init_Binding(void)
     rb_define_method(rb_cBinding, "local_variable_set", bind_local_variable_set, 2);
     rb_define_method(rb_cBinding, "local_variable_defined?", bind_local_variable_defined_p, 1);
     rb_define_method(rb_cBinding, "receiver", bind_receiver, 0);
+    rb_define_method(rb_cBinding, "source_location", bind_location, 0);
     rb_define_global_function("binding", rb_f_binding, 0);
 }

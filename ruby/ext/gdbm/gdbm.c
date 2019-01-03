@@ -2,7 +2,7 @@
 
   gdbm.c -
 
-  $Author: rhe $
+  $Author: nobu $
   modified at: Mon Jan 24 15:59:52 JST 1994
 
   Documentation by Peter Adolphs < futzilogik at users dot sourceforge dot net >
@@ -83,6 +83,10 @@ static VALUE rb_cGDBM, rb_eGDBMError, rb_eGDBMFatalError;
 
 #define MY_BLOCK_SIZE (2048)
 #define MY_FATAL_FUNC rb_gdbm_fatal
+
+NORETURN(static void rb_gdbm_fatal(const char *msg));
+NORETURN(static void closed_dbm(void));
+
 static void
 rb_gdbm_fatal(const char *msg)
 {

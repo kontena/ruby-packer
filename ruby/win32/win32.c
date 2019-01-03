@@ -23,6 +23,7 @@
 
 #include "ruby/ruby.h"
 #include "ruby/encoding.h"
+#include "ruby/io.h"
 #include "ruby/util.h"
 #include <fcntl.h>
 #include <process.h>
@@ -55,11 +56,6 @@
 #include "id.h"
 #include "internal.h"
 #include "encindex.h"
-
-// --------- [Enclose.io Hack start] ---------
-#include "enclose_io.h"
-// --------- [Enclose.io Hack end] ---------
-
 #define isdirsep(x) ((x) == '/' || (x) == '\\')
 
 #if defined _MSC_VER && _MSC_VER <= 1200
@@ -123,7 +119,6 @@ static char *w32_getenv(const char *name, UINT cp);
 
 int rb_w32_reparse_symlink_p(const WCHAR *path);
 
-static struct ChildRecord *CreateChild(const WCHAR *, const WCHAR *, SECURITY_ATTRIBUTES *, HANDLE, HANDLE, HANDLE, DWORD);
 static int has_redirection(const char *, UINT);
 int rb_w32_wait_events(HANDLE *events, int num, DWORD timeout);
 static int rb_w32_open_osfhandle(intptr_t osfhandle, int flags);
@@ -854,11 +849,6 @@ static int w32_cmdvector(const WCHAR *, char ***, UINT, rb_encoding *);
 void
 rb_w32_sysinit(int *argc, char ***argv)
 {
-    int new_argc;
-    char **new_argv;
-    UINT cp;
-    size_t i;
-
 #if RUBY_MSVCRT_VERSION >= 80
     static void set_pioinfo_extra(void);
 
@@ -875,28 +865,6 @@ rb_w32_sysinit(int *argc, char ***argv)
     // subvert cmd.exe's feeble attempt at command line parsing
     //
     *argc = w32_cmdvector(GetCommandLineW(), argv, CP_UTF8, &OnigEncodingUTF_8);
-
-    // --------- [Enclose.io Hack start] ---------
-    #ifdef ENCLOSE_IO_ENTRANCE
-    new_argc = *argc;
-    new_argv = *argv;
-    cp = CP_UTF8;
-    if (NULL == getenv("ENCLOSE_IO_USE_ORIGINAL_RUBY")) {
-        new_argv = (char **)malloc( (*argc + 1) * sizeof(char *));
-        assert(new_argv);
-        new_argv[0] = (*argv)[0];
-        new_argv[1] = ENCLOSE_IO_ENTRANCE;
-        for (i = 1; i < *argc; ++i) {
-               new_argv[2 + i - 1] = (*argv)[i];
-        }
-        new_argc = *argc + 1;
-
-        *argc = new_argc;
-        *argv = new_argv;
-    }
-    #endif
-    // --------- [Enclose.io Hack end] ---------
-
 
     //
     // Now set up the correct time stuff
@@ -1227,33 +1195,27 @@ child_result(struct ChildRecord *child, int mode)
 }
 
 /* License: Ruby's */
-static struct ChildRecord *
-CreateChild(const WCHAR *cmd, const WCHAR *prog, SECURITY_ATTRIBUTES *psa,
-	    HANDLE hInput, HANDLE hOutput, HANDLE hError, DWORD dwCreationFlags)
+static int
+CreateChild(struct ChildRecord *child, const WCHAR *cmd, const WCHAR *prog, HANDLE hInput, HANDLE hOutput, HANDLE hError, DWORD dwCreationFlags)
 {
     BOOL fRet;
     STARTUPINFOW aStartupInfo;
     PROCESS_INFORMATION aProcessInformation;
     SECURITY_ATTRIBUTES sa;
-    struct ChildRecord *child;
 
     if (!cmd && !prog) {
 	errno = EFAULT;
-	return NULL;
+        return FALSE;
     }
 
-    child = FindFreeChildSlot();
     if (!child) {
-	errno = EAGAIN;
-	return NULL;
+        errno = EAGAIN;
+        return FALSE;
     }
 
-    if (!psa) {
-	sa.nLength              = sizeof (SECURITY_ATTRIBUTES);
-	sa.lpSecurityDescriptor = NULL;
-	sa.bInheritHandle       = TRUE;
-	psa = &sa;
-    }
+    sa.nLength              = sizeof(SECURITY_ATTRIBUTES);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle       = TRUE;
 
     memset(&aStartupInfo, 0, sizeof(aStartupInfo));
     memset(&aProcessInformation, 0, sizeof(aProcessInformation));
@@ -1283,19 +1245,19 @@ CreateChild(const WCHAR *cmd, const WCHAR *prog, SECURITY_ATTRIBUTES *psa,
     if (lstrlenW(cmd) > 32767) {
 	child->pid = 0;		/* release the slot */
 	errno = E2BIG;
-	return NULL;
+        return FALSE;
     }
 
     RUBY_CRITICAL {
-	fRet = CreateProcessW(prog, (WCHAR *)cmd, psa, psa,
-			      psa->bInheritHandle, dwCreationFlags, NULL, NULL,
+        fRet = CreateProcessW(prog, (WCHAR *)cmd, &sa, &sa,
+                              sa.bInheritHandle, dwCreationFlags, NULL, NULL,
 			      &aStartupInfo, &aProcessInformation);
 	errno = map_errno(GetLastError());
     }
 
     if (!fRet) {
 	child->pid = 0;		/* release the slot */
-	return NULL;
+        return FALSE;
     }
 
     CloseHandle(aProcessInformation.hThread);
@@ -1303,7 +1265,7 @@ CreateChild(const WCHAR *cmd, const WCHAR *prog, SECURITY_ATTRIBUTES *psa,
     child->hProcess = aProcessInformation.hProcess;
     child->pid = (rb_pid_t)aProcessInformation.dwProcessId;
 
-    return child;
+    return TRUE;
 }
 
 /* License: Ruby's */
@@ -1328,6 +1290,46 @@ is_batch(const char *cmd)
 #define wstr_to_filecp(str, plen) wstr_to_mbstr(filecp(), str, -1, plen)
 #define utf8_to_wstr(str, plen) mbstr_to_wstr(CP_UTF8, str, -1, plen)
 #define wstr_to_utf8(str, plen) wstr_to_mbstr(CP_UTF8, str, -1, plen)
+
+/* License: Ruby's */
+MJIT_FUNC_EXPORTED HANDLE
+rb_w32_start_process(const char *abspath, char *const *argv, int out_fd)
+{
+    /* NOTE: This function is used by MJIT worker, so it can be used parallelly with
+       Ruby's main thread. So functions touching things shared with main thread can't
+       be used, like `ALLOCV` that may trigger GC or `FindFreeChildSlot` that finds
+       a slot from shared memory without atomic locks. */
+    struct ChildRecord child;
+    char *cmd;
+    size_t len;
+    WCHAR *wcmd = NULL, *wprog = NULL;
+    HANDLE outHandle = NULL;
+
+    if (out_fd) {
+        outHandle = (HANDLE)rb_w32_get_osfhandle(out_fd);
+    }
+
+    len = join_argv(NULL, argv, FALSE, filecp(), 1);
+    cmd = alloca(sizeof(char) * len);
+    join_argv(cmd, argv, FALSE, filecp(), 1);
+
+    if (!(wcmd = mbstr_to_wstr(filecp(), cmd, -1, NULL))) {
+        errno = E2BIG;
+        return NULL;
+    }
+    if (!(wprog = mbstr_to_wstr(filecp(), abspath, -1, NULL))) {
+        errno = E2BIG;
+        return NULL;
+    }
+
+    if (!CreateChild(&child, wcmd, wprog, NULL, outHandle, outHandle, 0)) {
+        return NULL;
+    }
+
+    free(wcmd);
+    free(wprog);
+    return child.hProcess;
+}
 
 /* License: Artistic or GPL */
 static rb_pid_t
@@ -1445,7 +1447,10 @@ w32_spawn(int mode, const char *cmd, const char *prog, UINT cp)
     if (v) ALLOCV_END(v);
 
     if (!e) {
-	ret = child_result(CreateChild(wcmd, wshell, NULL, NULL, NULL, NULL, 0), mode);
+        struct ChildRecord *child = FindFreeChildSlot();
+        if (CreateChild(child, wcmd, wshell, NULL, NULL, NULL, 0)) {
+            ret = child_result(child, mode);
+        }
     }
     free(wshell);
     free(wcmd);
@@ -1530,7 +1535,10 @@ w32_aspawn_flags(int mode, const char *prog, char *const *argv, DWORD flags, UIN
     if (!e && prog && !(wprog = mbstr_to_wstr(cp, prog, -1, NULL))) e = E2BIG;
 
     if (!e) {
-	ret = child_result(CreateChild(wcmd, wprog, NULL, NULL, NULL, NULL, flags), mode);
+        struct ChildRecord *child = FindFreeChildSlot();
+        if (CreateChild(child, wcmd, wprog, NULL, NULL, NULL, flags)) {
+            ret = child_result(child, mode);
+        }
     }
     free(wprog);
     free(wcmd);
@@ -1859,9 +1867,6 @@ w32_cmdvector(const WCHAR *cmd, char ***vec, UINT cp, rb_encoding *enc)
 	curr = (NtCmdLineElement *)calloc(sizeof(NtCmdLineElement), 1);
 	if (!curr) goto do_nothing;
 	curr->str = rb_w32_wstr_to_mbstr(cp, base, len, &curr->len);
-	if (curr->str && (curr->str = realloc(curr->str, curr->len + 1))) {
-	    curr->str[curr->len] = '\0';
-	}
 	curr->flags |= NTMALLOC;
 
 	if (globbing && (tail = cmdglob(curr, cmdtail, cp, enc))) {
@@ -2146,6 +2151,7 @@ rb_w32_wstr_to_mbstr(UINT cp, const WCHAR *wstr, int clen, long *plen)
 WCHAR *
 rb_w32_mbstr_to_wstr(UINT cp, const char *str, int clen, long *plen)
 {
+    /* This is used by MJIT worker. Do not trigger GC or call Ruby method here. */
     WCHAR *ptr;
     int len = MultiByteToWideChar(cp, 0, str, clen, NULL, 0);
     if (!(ptr = malloc(sizeof(WCHAR) * len))) return 0;
@@ -2477,6 +2483,7 @@ EXTERN_C _CRTIMP ioinfo * __pioinfo[];
 #endif
 static inline ioinfo* _pioinfo(int);
 
+
 #define IOINFO_ARRAY_ELTS	(1 << IOINFO_L2E)
 #define _osfhnd(i)  (_pioinfo(i)->osfhnd)
 #define _osfile(i)  (_pioinfo(i)->osfile)
@@ -2551,7 +2558,7 @@ set_pioinfo_extra(void)
 #else
     __pioinfo = *(ioinfo***)(p);
 #endif
-#else
+#endif
     int fd;
 
     fd = _open("NUL", O_RDONLY);
@@ -2566,7 +2573,6 @@ set_pioinfo_extra(void)
 	/* not found, maybe something wrong... */
 	pioinfo_extra = 0;
     }
-#endif
 }
 #else
 #define pioinfo_extra 0
@@ -4423,11 +4429,11 @@ fcntl(int fd, int cmd, ...)
 
 /* License: Ruby's */
 int
-rb_w32_set_nonblock(int fd)
+rb_w32_set_nonblock2(int fd, int nonblock)
 {
     SOCKET sock = TO_SOCKET(fd);
     if (is_socket(sock)) {
-	return setfl(sock, O_NONBLOCK);
+	return setfl(sock, nonblock ? O_NONBLOCK : 0);
     }
     else if (is_pipe(sock)) {
 	DWORD state;
@@ -4435,7 +4441,12 @@ rb_w32_set_nonblock(int fd)
 	    errno = map_errno(GetLastError());
 	    return -1;
 	}
-	state |= PIPE_NOWAIT;
+        if (nonblock) {
+            state |= PIPE_NOWAIT;
+        }
+        else {
+            state &= ~PIPE_NOWAIT;
+        }
 	if (!SetNamedPipeHandleState((HANDLE)sock, &state, NULL, NULL)) {
 	    errno = map_errno(GetLastError());
 	    return -1;
@@ -4446,6 +4457,12 @@ rb_w32_set_nonblock(int fd)
 	errno = EBADF;
 	return -1;
     }
+}
+
+int
+rb_w32_set_nonblock(int fd)
+{
+    return rb_w32_set_nonblock2(fd, TRUE);
 }
 
 #ifndef WNOHANG
@@ -4606,7 +4623,8 @@ waitpid(rb_pid_t pid, int *stat_loc, int options)
 
 static int have_precisetime = -1;
 
-static void get_systemtime(FILETIME *ft)
+static void
+get_systemtime(FILETIME *ft)
 {
     typedef void (WINAPI *get_time_func)(FILETIME *ft);
     static get_time_func func = (get_time_func)-1;
@@ -4626,11 +4644,13 @@ static void get_systemtime(FILETIME *ft)
 }
 
 /* License: Ruby's */
-static int
-filetime_to_timeval(const FILETIME* ft, struct timeval *tv)
+/* split FILETIME value into UNIX time and sub-seconds in NT ticks */
+static time_t
+filetime_split(const FILETIME* ft, long *subsec)
 {
     ULARGE_INTEGER tmp;
     unsigned LONG_LONG lt;
+    const unsigned LONG_LONG subsec_unit = (unsigned LONG_LONG)10 * 1000 * 1000;
 
     tmp.LowPart = ft->dwLowDateTime;
     tmp.HighPart = ft->dwHighDateTime;
@@ -4640,13 +4660,10 @@ filetime_to_timeval(const FILETIME* ft, struct timeval *tv)
        convert it into UNIX time (since 1970/01/01 00:00:00 UTC).
        the first leap second is at 1972/06/30, so we doesn't need to think
        about it. */
-    lt /= 10;	/* to usec */
-    lt -= (LONG_LONG)((1970-1601)*365.2425) * 24 * 60 * 60 * 1000 * 1000;
+    lt -= (LONG_LONG)((1970-1601)*365.2425) * 24 * 60 * 60 * subsec_unit;
 
-    tv->tv_sec = (long)(lt / (1000 * 1000));
-    tv->tv_usec = (long)(lt % (1000 * 1000));
-
-    return tv->tv_sec > 0 ? 0 : -1;
+    *subsec = (long)(lt % subsec_unit);
+    return (time_t)(lt / subsec_unit);
 }
 
 /* License: Ruby's */
@@ -4654,9 +4671,11 @@ int __cdecl
 gettimeofday(struct timeval *tv, struct timezone *tz)
 {
     FILETIME ft;
+    long subsec;
 
     get_systemtime(&ft);
-    filetime_to_timeval(&ft, tv);
+    tv->tv_sec = filetime_split(&ft, &subsec);
+    tv->tv_usec = subsec / 10;
 
     return 0;
 }
@@ -4668,10 +4687,12 @@ clock_gettime(clockid_t clock_id, struct timespec *sp)
     switch (clock_id) {
       case CLOCK_REALTIME:
 	{
-	    struct timeval tv;
-	    gettimeofday(&tv, NULL);
-	    sp->tv_sec = tv.tv_sec;
-	    sp->tv_nsec = tv.tv_usec * 1000;
+	    FILETIME ft;
+	    long subsec;
+
+	    get_systemtime(&ft);
+	    sp->tv_sec = filetime_split(&ft, &subsec);
+	    sp->tv_nsec = subsec * 100;
 	    return 0;
 	}
       case CLOCK_MONOTONIC:
@@ -5522,12 +5543,11 @@ stati128_handle(HANDLE h, struct stati128 *st)
 static time_t
 filetime_to_unixtime(const FILETIME *ft)
 {
-    struct timeval tv;
+    long subsec;
+    time_t t = filetime_split(ft, &subsec);
 
-    if (filetime_to_timeval(ft, &tv) == (time_t)-1)
-	return 0;
-    else
-	return tv.tv_sec;
+    if (t < 0) return 0;
+    return t;
 }
 
 /* License: Ruby's */
@@ -6713,11 +6733,12 @@ constat_apply(HANDLE handle, struct constat *s, WCHAR w)
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     const int *seq = s->vt100.seq;
     int count = s->vt100.state;
-    int arg1 = 1;
+    int arg0, arg1 = 1;
     COORD pos;
 
     if (!GetConsoleScreenBufferInfo(handle, &csbi)) return;
-    if (count > 0 && seq[0] > 0) arg1 = seq[0];
+    arg0 = (count > 0 && seq[0] > 0);
+    if (arg0) arg1 = seq[0];
     switch (w) {
       case L'm':
 	SetConsoleTextAttribute(handle, constat_attr(count, seq, csbi.wAttributes, s->vt100.attr, &s->vt100.reverse));
@@ -6776,19 +6797,19 @@ constat_apply(HANDLE handle, struct constat *s, WCHAR w)
 	SetConsoleCursorPosition(handle, pos);
 	break;
       case L'J':
-	switch (arg1) {
+	switch (arg0 ? arg1 : 0) {
 	  case 0:	/* erase after cursor */
 	    constat_clear(handle, csbi.wAttributes,
 			  (csbi.dwSize.X * (csbi.srWindow.Bottom - csbi.dwCursorPosition.Y + 1)
 			   - csbi.dwCursorPosition.X),
 			  csbi.dwCursorPosition);
 	    break;
-	  case 1:	/* erase before cursor */
+	  case 1:	/* erase before *and* cursor */
 	    pos.X = 0;
 	    pos.Y = csbi.srWindow.Top;
 	    constat_clear(handle, csbi.wAttributes,
 			  (csbi.dwSize.X * (csbi.dwCursorPosition.Y - csbi.srWindow.Top)
-			   + csbi.dwCursorPosition.X),
+			   + csbi.dwCursorPosition.X + 1),
 			  pos);
 	    break;
 	  case 2:	/* erase entire screen */
@@ -6808,17 +6829,17 @@ constat_apply(HANDLE handle, struct constat *s, WCHAR w)
 	}
 	break;
       case L'K':
-	switch (arg1) {
+	switch (arg0 ? arg1 : 0) {
 	  case 0:	/* erase after cursor */
 	    constat_clear(handle, csbi.wAttributes,
 			  (csbi.dwSize.X - csbi.dwCursorPosition.X),
 			  csbi.dwCursorPosition);
 	    break;
-	  case 1:	/* erase before cursor */
+	  case 1:	/* erase before *and* cursor */
 	    pos.X = 0;
 	    pos.Y = csbi.dwCursorPosition.Y;
 	    constat_clear(handle, csbi.wAttributes,
-			  csbi.dwCursorPosition.X, pos);
+			  csbi.dwCursorPosition.X + 1, pos);
 	    break;
 	  case 2:	/* erase entire line */
 	    pos.X = 0;
@@ -6852,6 +6873,10 @@ constat_apply(HANDLE handle, struct constat *s, WCHAR w)
 	break;
     }
 }
+
+/* get rid of console writing bug; assume WriteConsole and WriteFile
+ * on a console share the same limit. */
+static const long MAXSIZE_CONSOLE_WRITING = 31366;
 
 /* License: Ruby's */
 static long
@@ -6907,7 +6932,7 @@ constat_parse(HANDLE h, struct constat *s, const WCHAR **ptrp, long *lenp)
 	    }
 	    rest = 0;
 	}
-	else {
+	else if ((rest = *lenp - len) < MAXSIZE_CONSOLE_WRITING) {
 	    continue;
 	}
 	*ptrp = ptr;
@@ -7013,11 +7038,6 @@ rb_w32_read(int fd, void *buf, size_t size)
     // validate fd by using _get_osfhandle() because we cannot access _nhandle
     if (_get_osfhandle(fd) == -1) {
 	return -1;
-    }
-
-    if (SQUASH_VALID_VFD(fd)) {
-	// TODO how about Binary Mode File I/O?
-	return _read(fd, buf, size);
     }
 
     if (_osfile(fd) & FTEXT) {
@@ -7158,7 +7178,11 @@ rb_w32_write(int fd, const void *buf, size_t size)
 
     if ((_osfile(fd) & FTEXT) &&
         (!(_osfile(fd) & FPIPE) || fd == fileno(stdout) || fd == fileno(stderr))) {
-	return _write(fd, buf, size);
+	ssize_t w = _write(fd, buf, size);
+	if (w == (ssize_t)-1 && errno == EINVAL) {
+	    errno = map_errno(GetLastError());
+	}
+	return w;
     }
 
     rb_acrt_lowio_lock_fh(fd);
@@ -7170,8 +7194,7 @@ rb_w32_write(int fd, const void *buf, size_t size)
 
     ret = 0;
   retry:
-    /* get rid of console writing bug */
-    len = (_osfile(fd) & FDEV) ? min(32 * 1024, size) : size;
+    len = (_osfile(fd) & FDEV) ? min(MAXSIZE_CONSOLE_WRITING, size) : size;
     size -= len;
   retry2:
 
@@ -8008,7 +8031,7 @@ w32_io_info(VALUE *file, w32_io_info_t *st)
 	    CloseHandle(f);
 	    return INVALID_HANDLE_VALUE;
 	}
-	/* this API may not wrok at files on non Microsoft SMB
+	/* this API may not work at files on non Microsoft SMB
 	 * server, fallback to old API then. */
 	if (GetFileInformationByHandle(f, &st->info.bhfi)) {
 	    st->file_id_p = FALSE;

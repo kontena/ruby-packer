@@ -1,5 +1,5 @@
-require File.expand_path('../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/def', __FILE__)
+require_relative '../spec_helper'
+require_relative 'fixtures/def'
 
 # Language-level method behaviour
 describe "Redefining a method" do
@@ -79,6 +79,18 @@ describe "Defining a method" do
   end
 end
 
+describe "An instance method" do
+  it "raises an error with too few arguments" do
+    def foo(a, b); end
+    lambda { foo 1 }.should raise_error(ArgumentError, 'wrong number of arguments (given 1, expected 2)')
+  end
+
+  it "raises an error with too many arguments" do
+    def foo(a); end
+    lambda { foo 1, 2 }.should raise_error(ArgumentError, 'wrong number of arguments (given 2, expected 1)')
+  end
+end
+
 describe "An instance method definition with a splat" do
   it "accepts an unnamed '*' argument" do
     def foo(*); end;
@@ -106,7 +118,7 @@ describe "An instance method definition with a splat" do
 
   it "requires the presence of any arguments that precede the *" do
     def foo(a, b, *c); end
-    lambda { foo 1 }.should raise_error(ArgumentError)
+    lambda { foo 1 }.should raise_error(ArgumentError, 'wrong number of arguments (given 1, expected 2+)')
   end
 end
 
@@ -139,7 +151,7 @@ describe "An instance method with a default argument" do
     def foo(a, b = 2)
       [a,b]
     end
-    lambda { foo }.should raise_error(ArgumentError)
+    lambda { foo }.should raise_error(ArgumentError, 'wrong number of arguments (given 0, expected 1..2)')
     foo(1).should == [1, 2]
   end
 
@@ -147,7 +159,7 @@ describe "An instance method with a default argument" do
     def foo(a, b = 2, *c)
       [a,b,c]
     end
-    lambda { foo }.should raise_error(ArgumentError)
+    lambda { foo }.should raise_error(ArgumentError, 'wrong number of arguments (given 0, expected 1+)')
     foo(1).should == [1,2,[]]
   end
 
@@ -234,10 +246,10 @@ describe "A singleton method definition" do
     (obj==2).should == 2
   end
 
-  it "raises RuntimeError if frozen" do
+  it "raises #{frozen_error_class} if frozen" do
     obj = Object.new
     obj.freeze
-    lambda { def obj.foo; end }.should raise_error(RuntimeError)
+    lambda { def obj.foo; end }.should raise_error(frozen_error_class)
   end
 end
 
@@ -385,12 +397,12 @@ describe "A method definition inside a metaclass scope" do
     lambda { Object.new.a_singleton_method }.should raise_error(NoMethodError)
   end
 
-  it "raises RuntimeError if frozen" do
+  it "raises #{frozen_error_class} if frozen" do
     obj = Object.new
     obj.freeze
 
     class << obj
-      lambda { def foo; end }.should raise_error(RuntimeError)
+      lambda { def foo; end }.should raise_error(frozen_error_class)
     end
   end
 end
@@ -488,7 +500,7 @@ describe "A nested method definition" do
     DefSpecNested.should_not have_instance_method :body_method
   end
 
-  it "defines methods as public by default" do
+  it "creates an instance method inside Class.new" do
     cls = Class.new do
       def do_def
         def new_def
@@ -500,6 +512,41 @@ describe "A nested method definition" do
     obj = cls.new
     obj.do_def
     obj.new_def.should == 1
+
+    cls.new.new_def.should == 1
+
+    -> { Object.new.new_def }.should raise_error(NoMethodError)
+  end
+end
+
+describe "A method definition always resets the visibility to public for nested definitions" do
+  it "in Class.new" do
+    cls = Class.new do
+      private
+      def do_def
+        def new_def
+          1
+        end
+      end
+    end
+
+    obj = cls.new
+    -> { obj.do_def }.should raise_error(NoMethodError, /private/)
+    obj.send :do_def
+    obj.new_def.should == 1
+
+    cls.new.new_def.should == 1
+
+    -> { Object.new.new_def }.should raise_error(NoMethodError)
+  end
+
+  it "at the toplevel" do
+    obj = Object.new
+    -> { obj.toplevel_define_other_method }.should raise_error(NoMethodError, /private/)
+    toplevel_define_other_method
+    nested_method_in_toplevel_method.should == 42
+
+    Object.new.nested_method_in_toplevel_method.should == 42
   end
 end
 
@@ -682,7 +729,7 @@ describe "a method definition that sets more than one default parameter all to t
   end
 
   it "only allows overriding the default value of the first such parameter in each set" do
-    lambda { foo(1,2) }.should raise_error(ArgumentError)
+    lambda { foo(1,2) }.should raise_error(ArgumentError, 'wrong number of arguments (given 2, expected 0..1)')
   end
 
   def bar(a=b=c=1,d=2)
@@ -693,7 +740,7 @@ describe "a method definition that sets more than one default parameter all to t
     bar.should == [1,1,1,2]
     bar(3).should == [3,nil,nil,2]
     bar(3,4).should == [3,nil,nil,4]
-    lambda { bar(3,4,5) }.should raise_error(ArgumentError)
+    lambda { bar(3,4,5) }.should raise_error(ArgumentError, 'wrong number of arguments (given 3, expected 0..2)')
   end
 end
 

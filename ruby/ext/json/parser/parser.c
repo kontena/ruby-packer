@@ -91,12 +91,13 @@ static int convert_UTF32_to_UTF8(char *buf, UTF32 ch)
 
 static VALUE mJSON, mExt, cParser, eParserError, eNestingError;
 static VALUE CNaN, CInfinity, CMinusInfinity;
+static VALUE cBigDecimal = Qundef;
 
 static ID i_json_creatable_p, i_json_create, i_create_id, i_create_additions,
           i_chr, i_max_nesting, i_allow_nan, i_symbolize_names,
           i_object_class, i_array_class, i_decimal_class, i_key_p,
           i_deep_const_get, i_match, i_match_string, i_aset, i_aref,
-          i_leftshift, i_new;
+          i_leftshift, i_new, i_BigDecimal;
 
 
 #line 125 "parser.rl"
@@ -985,6 +986,19 @@ enum {JSON_float_en_main = 1};
 #line 340 "parser.rl"
 
 
+static int is_bigdecimal_class(VALUE obj)
+{
+  if (cBigDecimal == Qundef) {
+    if (rb_const_defined(rb_cObject, i_BigDecimal)) {
+      cBigDecimal = rb_const_get_at(rb_cObject, i_BigDecimal);
+    }
+    else {
+      return 0;
+    }
+  }
+  return obj == cBigDecimal;
+}
+
 static char *JSON_parse_float(JSON_Parser *json, char *p, char *pe, VALUE *result)
 {
     int cs = EVIL;
@@ -1136,7 +1150,11 @@ case 7:
         } else {
           VALUE text;
           text = rb_str_new2(FBUFFER_PTR(json->fbuffer));
-          *result = rb_funcall(json->decimal_class, i_new, 1, text);
+          if (is_bigdecimal_class(json->decimal_class)) {
+            *result = rb_funcall(Qnil, i_BigDecimal, 1, text);
+          } else {
+            *result = rb_funcall(json->decimal_class, i_new, 1, text);
+          }
         }
         return p + 1;
     } else {
@@ -1659,7 +1677,9 @@ case 7:
     if (json->symbolize_names && json->parsing_name) {
       *result = rb_str_intern(*result);
     } else {
-      rb_str_resize(*result, RSTRING_LEN(*result));
+          if (RB_TYPE_P(*result, T_STRING)) {
+              rb_str_resize(*result, RSTRING_LEN(*result));
+          }
     }
     if (cs >= JSON_string_first_final) {
         return p + 1;
@@ -1830,7 +1850,7 @@ static VALUE cParser_initialize(int argc, VALUE *argv, VALUE self)
 }
 
 
-#line 1834 "parser.c"
+#line 1836 "parser.c"
 enum {JSON_start = 1};
 enum {JSON_first_final = 10};
 enum {JSON_error = 0};
@@ -1838,7 +1858,7 @@ enum {JSON_error = 0};
 enum {JSON_en_main = 1};
 
 
-#line 742 "parser.rl"
+#line 744 "parser.rl"
 
 
 /*
@@ -1855,16 +1875,16 @@ static VALUE cParser_parse(VALUE self)
   GET_PARSER;
 
 
-#line 1859 "parser.c"
+#line 1861 "parser.c"
 	{
 	cs = JSON_start;
 	}
 
-#line 758 "parser.rl"
+#line 760 "parser.rl"
   p = json->source;
   pe = p + json->len;
 
-#line 1868 "parser.c"
+#line 1870 "parser.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
@@ -1898,7 +1918,7 @@ st0:
 cs = 0;
 	goto _out;
 tr2:
-#line 734 "parser.rl"
+#line 736 "parser.rl"
 	{
         char *np = JSON_parse_value(json, p, pe, &result, 0);
         if (np == NULL) { p--; {p++; cs = 10; goto _out;} } else {p = (( np))-1;}
@@ -1908,7 +1928,7 @@ st10:
 	if ( ++p == pe )
 		goto _test_eof10;
 case 10:
-#line 1912 "parser.c"
+#line 1914 "parser.c"
 	switch( (*p) ) {
 		case 13: goto st10;
 		case 32: goto st10;
@@ -1997,7 +2017,7 @@ case 9:
 	_out: {}
 	}
 
-#line 761 "parser.rl"
+#line 763 "parser.rl"
 
   if (cs >= JSON_first_final && p == pe) {
     return result;
@@ -2064,6 +2084,7 @@ static VALUE cParser_source(VALUE self)
 
 void Init_parser(void)
 {
+#undef rb_intern
     rb_require("json/common");
     mJSON = rb_define_module("JSON");
     mExt = rb_define_module_under(mJSON, "Ext");
@@ -2098,6 +2119,7 @@ void Init_parser(void)
     i_aref = rb_intern("[]");
     i_leftshift = rb_intern("<<");
     i_new = rb_intern("new");
+    i_BigDecimal = rb_intern("BigDecimal");
 }
 
 /*

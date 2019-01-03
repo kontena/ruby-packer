@@ -7,7 +7,7 @@
 
   Copyright (C) 2006 Akinori MUSHA
 
-  $Id: bubblebabble.c 55773 2016-07-29 11:57:14Z nobu $
+  $Id: bubblebabble.c 62429 2018-02-16 08:39:48Z nobu $
 
 ************************************************/
 
@@ -124,6 +124,7 @@ rb_digest_instance_bubblebabble(VALUE self)
 void
 Init_bubblebabble(void)
 {
+#undef rb_intern
     VALUE rb_mDigest, rb_mDigest_Instance, rb_cDigest_Class;
 
     rb_require("digest");

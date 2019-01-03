@@ -1,3 +1,14 @@
+# spec/bundler
+
+spec/bundler is rspec examples for bundler library(lib/bundler.rb, lib/bundler/*).
+
+## Running spec/bundler
+
+To run rspec for bundler:
+```bash
+make test-bundler
+```
+
 # spec/ruby
 
 ruby/spec (https://github.com/ruby/spec/) is
@@ -18,6 +29,16 @@ as in the end user programs tend to rely on every behavior MRI exhibits.
 In other words: If adding a spec might reveal a bug in
 another implementation, then it is worth adding it.
 Currently, the only module which is MRI-specific is `RubyVM`.
+
+Version guards (`ruby_version_is`) must be added for new features or features
+which change behavior or are removed. See `spec/ruby/CONTRIBUTING.md` for details.
+
+To verify specs are compatible with older Ruby versions:
+```
+cd spec/ruby
+$RUBY_MANAGER use 2.3.7
+../mspec/bin/mspec -j
+```
 
 ## Running ruby/spec
 

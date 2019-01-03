@@ -1,5 +1,5 @@
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/common', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/common'
 
 describe "Process.wait" do
   ProcessSpecs.use_system_ruby(self)
@@ -8,6 +8,10 @@ describe "Process.wait" do
     begin
       leaked = Process.waitall
       puts "leaked before wait specs: #{leaked}" unless leaked.empty?
+      with_feature :mjit do
+        # Ruby-space should not see PIDs used by mjit
+        leaked.should be_empty
+      end
     rescue NotImplementedError
     end
   end

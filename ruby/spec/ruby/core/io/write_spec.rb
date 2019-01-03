@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes', __FILE__)
-require File.expand_path('../shared/write', __FILE__)
-require File.expand_path('../shared/binwrite', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/classes'
+require_relative 'shared/write'
+require_relative 'shared/binwrite'
 
 describe "IO#write on a file" do
   before :each do
@@ -103,7 +103,7 @@ describe "IO.write" do
     describe "on a FIFO" do
       before :each do
         @fifo = tmp("File_open_fifo")
-        system "mkfifo #{@fifo}"
+        File.mkfifo(@fifo)
       end
 
       after :each do
@@ -127,6 +127,17 @@ end
 
 describe "IO#write" do
   it_behaves_like :io_write, :write
+
+  ruby_version_is "2.5" do
+    it "accepts multiple arguments" do
+      IO.pipe do |r, w|
+        w.write("foo", "bar")
+        w.close
+
+        r.read.should == "foobar"
+      end
+    end
+  end
 end
 
 platform_is :windows do

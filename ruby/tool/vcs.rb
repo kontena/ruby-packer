@@ -14,7 +14,7 @@ unless File.respond_to? :realpath
 end
 
 def IO.pread(*args)
-  STDERR.puts(*args.inspect) if $DEBUG
+  STDERR.puts(args.inspect) if $DEBUG
   popen(*args) {|f|f.read}
 end
 
@@ -90,9 +90,33 @@ else
     $VERBOSE = verbose unless verbose.nil?
   end
   using DebugPOpen
+  module DebugSystem
+    def system(*args)
+      STDERR.puts args.inspect if $DEBUG
+      exception = false
+      opts = Hash.try_convert(args[-1])
+      if RUBY_VERSION >= "2.6"
+        unless opts
+          opts = {}
+          args << opts
+        end
+        exception = opts.fetch(:exception) {opts[:exception] = true}
+      elsif opts
+        exception = opts.delete(:exception) {true}
+        args.pop if opts.empty?
+      end
+      ret = super(*args)
+      raise "Command failed with status (#$?): #{args[0]}" if exception and !ret
+      ret
+    end
+  end
+  module Kernel
+    prepend(DebugSystem)
+  end
 end
 
 class VCS
+  prepend(DebugSystem) if defined?(DebugSystem)
   class NotFoundError < RuntimeError; end
 
   @@dirs = []
@@ -100,15 +124,18 @@ class VCS
     @@dirs << [dir, self, pred]
   end
 
-  def self.detect(path)
-    @@dirs.each do |dir, klass, pred|
-      curr = path
-      loop {
+  def self.detect(path, uplevel_limit: 0)
+    curr = path
+    begin
+      @@dirs.each do |dir, klass, pred|
         return klass.new(curr) if pred ? pred[curr, dir] : File.directory?(File.join(curr, dir))
-        prev, curr = curr, File.realpath(File.join(curr, '..'))
-        break if curr == prev # stop at the root directory
-      }
-    end
+      end
+      if uplevel_limit
+        break if uplevel_limit.zero?
+        uplevel_limit -= 1
+      end
+      prev, curr = curr, File.realpath(File.join(curr, '..'))
+    end until curr == prev # stop at the root directory
     raise VCS::NotFoundError, "does not seem to be under a vcs: #{path}"
   end
 
@@ -428,7 +455,6 @@ class VCS
 
     def export(revision, url, dir, keep_temp = false)
       ret = system(COMMAND, "clone", "-s", (@srcdir || '.').to_s, "-b", url, dir)
-      FileUtils.rm_rf("#{dir}/.git") if ret and !keep_temp
       ret
     end
 
@@ -445,7 +471,7 @@ class VCS
         rev unless rev.empty?
       end.join('..')
       cmd_pipe({'TZ' => 'JST-9', 'LANG' => 'C', 'LC_ALL' => 'C'},
-               %W"#{COMMAND} log --date=iso-local --topo-order #{range}", "rb") do |r|
+               %W"#{COMMAND} log --no-notes --date=iso-local --topo-order #{range}", "rb") do |r|
         open(path, 'w') do |w|
           sep = "-"*72
           w.puts sep
@@ -457,30 +483,43 @@ class VCS
             s.sub!(/^git-svn-id: .*@(\d+) .*\n+\z/, '')
             rev = $1
             s.gsub!(/^ {8}/, '') if /^(?! {8}|$)/ !~ s
+            s.sub!(/\n\n\z/, "\n")
             if /\A(\d+)-(\d+)-(\d+)/ =~ time
               date = Time.new($1.to_i, $2.to_i, $3.to_i).strftime("%a, %d %b %Y")
             end
-            w.puts "r#{rev} | #{author} | #{time} (#{date}) | #{s.count("\n")} lines\n\n"
+            lines = s.count("\n")
+            lines = "#{lines} line#{lines == 1 ? '' : 's'}"
+            w.puts "r#{rev} | #{author} | #{time} (#{date}) | #{lines}\n\n"
             w.puts s, sep
           end
         end
       end
     end
 
-    def commit
+    def last_changed_revision
       rev = cmd_read(%W"#{COMMAND} svn info"+[STDERR=>[:child, :out]])[/^Last Changed Rev: (\d+)/, 1]
       com = cmd_read(%W"#{COMMAND} svn find-rev r#{rev}").chomp
+      return rev, com
+    end
 
-      # TODO: dcommit necessary commits only with --add-author-from
-      same = true
-      cmd_pipe([COMMAND, "log", "--format=%ae %ce", "#{com}..@"], "rb") do |r|
-        r.each do |l|
-          same &&= /^(\S+) +\1$/ =~ l
-        end
+    def commit(opts = {})
+      dryrun = opts.fetch(:dryrun) {$DEBUG} if opts
+      rev, com = last_changed_revision
+      head = cmd_read(%W"#{COMMAND} symbolic-ref --short HEAD").chomp
+
+      commits = cmd_read([COMMAND, "log", "--reverse", "--format=%H %ae %ce", "#{com}..@"], "rb").split("\n")
+      commits.each_with_index do |l, i|
+        r, a, c = l.split
+        dcommit = [COMMAND, "svn", "dcommit"]
+        dcommit.insert(-2, "-n") if dryrun
+        dcommit << "--add-author-from" unless a == c
+        dcommit << r
+        system(*dcommit) or return false
+        system(COMMAND, "checkout", head) or return false
+        system(COMMAND, "rebase") or return false
       end
-      ret = system(COMMAND, "svn", "dcommit", *(["--add-author-from"] unless same))
 
-      if ret and rev
+      if rev
         old = [cmd_read(%W"#{COMMAND} log -1 --format=%H").chomp]
         old << cmd_read(%W"#{COMMAND} svn reset -r#{rev}")[/^r#{rev} = (\h+)/, 1]
         3.times do
@@ -489,7 +528,7 @@ class VCS
           break unless old.include?(cmd_read(%W"#{COMMAND} log -1 --format=%H").chomp)
         end
       end
-      ret
+      true
     end
   end
 end

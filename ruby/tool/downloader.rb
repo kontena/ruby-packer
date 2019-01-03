@@ -11,8 +11,8 @@ rescue LoadError
 else
   https = 'https'
 
-  # open-uri of ruby 2.2.0 accept an array of PEMs as ssl_ca_cert, but old
-  # versions are not.  so, patching OpenSSL::X509::Store#add_file instead.
+  # open-uri of ruby 2.2.0 accepts an array of PEMs as ssl_ca_cert, but old
+  # versions do not.  so, patching OpenSSL::X509::Store#add_file instead.
   class OpenSSL::X509::Store
     alias orig_add_file add_file
     def add_file(pems)
@@ -124,6 +124,11 @@ class Downloader
     options = options.dup
     url = URI(url)
     dryrun = options.delete(:dryrun)
+
+    # remove from options (future use, see r66448), see L166
+    unicode_beta = options.delete(:unicode_beta)
+    puts "never" if unicode_beta == 'assigned but unused variable...'
+
     if name
       file = Pathname.new(under(dir, name))
     else
@@ -161,7 +166,9 @@ class Downloader
       $stdout.flush
     end
     begin
-      data = url.read(options.merge(http_options(file, since.nil? ? true : since)))
+      data = with_retry(6) do
+        url.read(options.merge(http_options(file, since.nil? ? true : since)))
+      end
     rescue OpenURI::HTTPError => http_error
       if http_error.message =~ /^304 / # 304 Not Modified
         if $VERBOSE
@@ -207,7 +214,7 @@ class Downloader
     end
     return file.to_path
   rescue => e
-    raise "failed to download #{name}\n#{e.message}: #{url}"
+    raise "failed to download #{name}\n#{e.class}: #{e.message}: #{url}"
   end
 
   def self.under(dir, name)
@@ -264,6 +271,24 @@ class Downloader
       end
     end
   end
+
+  def self.with_retry(max_times, &block)
+    times = 0
+    begin
+      block.call
+    rescue Errno::ETIMEDOUT, SocketError, OpenURI::HTTPError, Net::ReadTimeout, Net::OpenTimeout => e
+      raise if e.is_a?(OpenURI::HTTPError) && e.message !~ /^50[023] / # retry only 500, 502, 503 for http error
+      times += 1
+      if times <= max_times
+        $stderr.puts "retrying #{e.class} (#{e.message}) after #{times ** 2} seconds..."
+        sleep(times ** 2)
+        retry
+      else
+        raise
+      end
+    end
+  end
+  private_class_method :with_retry
 end
 
 Downloader.https = https.freeze
@@ -290,6 +315,15 @@ if $0 == __FILE__
     when '--cache-dir'
       options[:cache_dir] = ARGV[1]
       ARGV.shift
+    when '--unicode-beta'
+      options[:unicode_beta] = ARGV[1]
+      ARGV.shift
+      # TODO: Move this code further down
+      if options[:unicode_beta]=='YES'
+        raise "Not yet able to deal with Unicode Data beta versions."
+      else
+        # TODO: deal with the case that we just switched from beta to 'regular'
+      end
     when /\A--cache-dir=(.*)/m
       options[:cache_dir] = $1
     when /\A-/
@@ -310,8 +344,9 @@ if $0 == __FILE__
       dir = destdir
       if prefix
         name = name.sub(/\A\.\//, '')
-        if name.start_with?(destdir+"/")
-          name = name[(destdir.size+1)..-1]
+        destdir2 = destdir.sub(/\A\.\//, '')
+        if name.start_with?(destdir2+"/")
+          name = name[(destdir2.size+1)..-1]
           if (dir = File.dirname(name)) == '.'
             dir = destdir
           else

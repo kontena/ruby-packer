@@ -2,11 +2,13 @@
  * load methods from eval.c
  */
 
-#include "internal.h"
+#include "ruby/encoding.h"
 #include "ruby/util.h"
+#include "internal.h"
 #include "dln.h"
 #include "eval_intern.h"
 #include "probes.h"
+#include "iseq.h"
 
 static VALUE ruby_dln_librefs;
 
@@ -171,22 +173,27 @@ get_loading_table(void)
     return GET_VM()->loading_table;
 }
 
+static st_data_t
+feature_key(const char *str, size_t len)
+{
+    return st_hash(str, len, 0xfea7009e);
+}
+
 static void
-features_index_add_single(VALUE short_feature, VALUE offset)
+features_index_add_single(const char* str, size_t len, VALUE offset)
 {
     struct st_table *features_index;
     VALUE this_feature_index = Qnil;
-    char *short_feature_cstr;
+    st_data_t short_feature_key;
 
     Check_Type(offset, T_FIXNUM);
-    Check_Type(short_feature, T_STRING);
-    short_feature_cstr = StringValueCStr(short_feature);
+    short_feature_key = feature_key(str, len);
 
     features_index = get_loaded_features_index_raw();
-    st_lookup(features_index, (st_data_t)short_feature_cstr, (st_data_t *)&this_feature_index);
+    st_lookup(features_index, short_feature_key, (st_data_t *)&this_feature_index);
 
     if (NIL_P(this_feature_index)) {
-	st_insert(features_index, (st_data_t)ruby_strdup(short_feature_cstr), (st_data_t)offset);
+	st_insert(features_index, short_feature_key, (st_data_t)offset);
     }
     else if (RB_TYPE_P(this_feature_index, T_FIXNUM)) {
 	VALUE feature_indexes[2];
@@ -195,7 +202,7 @@ features_index_add_single(VALUE short_feature, VALUE offset)
 	this_feature_index = (VALUE)xcalloc(1, sizeof(struct RArray));
 	RBASIC(this_feature_index)->flags = T_ARRAY; /* fake VALUE, do not mark/sweep */
 	rb_ary_cat(this_feature_index, feature_indexes, numberof(feature_indexes));
-	st_insert(features_index, (st_data_t)short_feature_cstr, (st_data_t)this_feature_index);
+	st_insert(features_index, short_feature_key, (st_data_t)this_feature_index);
     }
     else {
 	Check_Type(this_feature_index, T_ARRAY);
@@ -214,7 +221,6 @@ features_index_add_single(VALUE short_feature, VALUE offset)
 static void
 features_index_add(VALUE feature, VALUE offset)
 {
-    VALUE short_feature;
     const char *feature_str, *feature_end, *ext, *p;
 
     feature_str = StringValuePtr(feature);
@@ -230,26 +236,20 @@ features_index_add(VALUE feature, VALUE offset)
 
     p = ext ? ext : feature_end;
     while (1) {
-	long beg;
-
 	p--;
 	while (p >= feature_str && *p != '/')
 	    p--;
 	if (p < feature_str)
 	    break;
 	/* Now *p == '/'.  We reach this point for every '/' in `feature`. */
-	beg = p + 1 - feature_str;
-	short_feature = rb_str_subseq(feature, beg, feature_end - p - 1);
-	features_index_add_single(short_feature, offset);
+	features_index_add_single(p + 1, feature_end - p - 1, offset);
 	if (ext) {
-	    short_feature = rb_str_subseq(feature, beg, ext - p - 1);
-	    features_index_add_single(short_feature, offset);
+	    features_index_add_single(p + 1, ext - p - 1, offset);
 	}
     }
-    features_index_add_single(feature, offset);
+    features_index_add_single(feature_str, feature_end - feature_str, offset);
     if (ext) {
-	short_feature = rb_str_subseq(feature, 0, ext - feature_str);
-	features_index_add_single(short_feature, offset);
+	features_index_add_single(feature_str, ext - feature_str, offset);
     }
 }
 
@@ -259,9 +259,8 @@ loaded_features_index_clear_i(st_data_t key, st_data_t val, st_data_t arg)
     VALUE obj = (VALUE)val;
     if (!SPECIAL_CONST_P(obj)) {
 	rb_ary_free(obj);
-	xfree((void *)obj);
+	ruby_sized_xfree((void *)obj, sizeof(struct RArray));
     }
-    xfree((char *)key);
     return ST_DELETE;
 }
 
@@ -374,6 +373,7 @@ rb_feature_p(const char *feature, const char *ext, int rb, int expanded, const c
     long i, len, elen, n;
     st_table *loading_tbl, *features_index;
     st_data_t data;
+    st_data_t key;
     int type;
 
     if (fn) *fn = 0;
@@ -390,7 +390,8 @@ rb_feature_p(const char *feature, const char *ext, int rb, int expanded, const c
     features = get_loaded_features();
     features_index = get_loaded_features_index();
 
-    st_lookup(features_index, (st_data_t)feature, (st_data_t *)&this_feature_index);
+    key = feature_key(feature, strlen(feature));
+    st_lookup(features_index, key, (st_data_t *)&this_feature_index);
     /* We search `features` for an entry such that either
          "#{features[i]}" == "#{load_path[j]}/#{feature}#{e}"
        for some j, or
@@ -566,7 +567,6 @@ rb_provide(const char *feature)
 }
 
 NORETURN(static void load_failed(VALUE));
-const rb_iseq_t *rb_iseq_load_iseq(VALUE fname);
 
 static int
 rb_load_internal0(rb_execution_context_t *ec, VALUE fname, int wrap)
@@ -604,10 +604,12 @@ rb_load_internal0(rb_execution_context_t *ec, VALUE fname, int wrap)
 	    VALUE parser = rb_parser_new();
 	    rb_parser_set_context(parser, NULL, FALSE);
 	    ast = (rb_ast_t *)rb_parser_load_file(parser, fname);
-	    iseq = rb_iseq_new_top(ast->root, rb_fstring_cstr("<top (required)>"),
+	    iseq = rb_iseq_new_top(&ast->body, rb_fstring_lit("<top (required)>"),
 			    fname, rb_realpath_internal(Qnil, fname, 1), NULL);
 	    rb_ast_dispose(ast);
 	}
+        EXEC_EVENT_HOOK(ec, RUBY_EVENT_SCRIPT_COMPILED,
+                        ec->cfp->self, 0, 0, 0, (VALUE)iseq);
 	rb_iseq_eval(iseq);
     }
     EC_POP_TAG();
@@ -714,8 +716,6 @@ rb_f_load(int argc, VALUE *argv)
     return Qtrue;
 }
 
-extern VALUE rb_mWarning;
-
 static char *
 load_lock(const char *ftptr)
 {
@@ -740,7 +740,7 @@ load_lock(const char *ftptr)
     if (RTEST(ruby_verbose)) {
 	VALUE warning = rb_warning_string("loading in progress, circular require considered harmful - %s", ftptr);
 	rb_backtrace_each(rb_str_append, warning);
-	rb_warning_warn(rb_mWarning, warning);
+	rb_warning("%"PRIsVALUE, warning);
     }
     switch (rb_thread_shield_wait((VALUE)data)) {
       case Qfalse:
@@ -942,6 +942,42 @@ load_ext(VALUE path)
 {
     rb_scope_visibility_set(METHOD_VISI_PUBLIC);
     return (VALUE)dln_load(RSTRING_PTR(path));
+}
+
+/*
+ *  call-seq:
+ *     RubyVM.resolve_feature_path(feature) -> [:rb or :so, path]
+ *
+ *  Identifies the file that will be loaded by "require(feature)".
+ *  This API is experimental and just for internal.
+ *
+ *     RubyVM.resolve_feature_path("set")
+ *       #=> [:rb, "/path/to/feature.rb"]
+ */
+
+VALUE
+rb_resolve_feature_path(VALUE klass, VALUE fname)
+{
+    VALUE path;
+    int found;
+    VALUE sym;
+
+    fname = rb_get_path_check(fname, 0);
+    path = rb_str_encode_ospath(fname);
+    found = search_required(path, &path, 0);
+
+    switch (found) {
+      case 'r':
+        sym = ID2SYM(rb_intern("rb"));
+        break;
+      case 's':
+        sym = ID2SYM(rb_intern("so"));
+        break;
+      default:
+        load_failed(fname);
+    }
+
+    return rb_ary_new_from_args(2, sym, path);
 }
 
 /*
@@ -1193,7 +1229,7 @@ Init_load(void)
     rb_define_virtual_variable("$LOADED_FEATURES", get_loaded_features, 0);
     vm->loaded_features = rb_ary_new();
     vm->loaded_features_snapshot = rb_ary_tmp_new(0);
-    vm->loaded_features_index = st_init_strtable();
+    vm->loaded_features_index = st_init_numtable();
 
     rb_define_global_function("load", rb_f_load, -1);
     rb_define_global_function("require", rb_f_require, 1);

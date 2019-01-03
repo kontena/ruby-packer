@@ -1,11 +1,12 @@
 "exec" "${RUBY-ruby}" "-x" "$0" "$@" || true # -*- mode: ruby; coding: utf-8 -*-
 #!./ruby
-# $Id: runner.rb 60671 2017-11-06 07:35:37Z ko1 $
+# $Id: runner.rb 66344 2018-12-12 00:38:49Z k0kubun $
 
 # NOTE:
 # Never use optparse in this file.
 # Never use test/unit in this file.
 # Never use Ruby extensions in this file.
+# Maintain Ruby 1.8 compatibility for now
 
 begin
   require 'fileutils'
@@ -255,7 +256,7 @@ def show_progress(message = '')
   end
 rescue Interrupt
   $stderr.puts "\##{@count} #{@location}"
-  raise Interrupt
+  raise
 rescue Exception => err
   $stderr.print 'E'
   $stderr.puts if @verbose
@@ -366,6 +367,7 @@ def assert_normal_exit(testsrc, *rest, timeout: nil, **opt)
 end
 
 def assert_finish(timeout_seconds, testsrc, message = '')
+  timeout_seconds *= 3 if RubyVM::MJIT.enabled? # for --jit-wait
   newtest
   show_progress(message) {
     faildesc = nil
@@ -374,12 +376,24 @@ def assert_finish(timeout_seconds, testsrc, message = '')
     pid = io.pid
     waited = false
     tlimit = Time.now + timeout_seconds
-    while Time.now < tlimit
+    diff = timeout_seconds
+    while diff > 0
       if Process.waitpid pid, Process::WNOHANG
         waited = true
         break
       end
-      sleep 0.1
+      if io.respond_to?(:read_nonblock)
+        if IO.select([io], nil, nil, diff)
+          begin
+            io.read_nonblock(1024)
+          rescue Errno::EAGAIN, IO::WaitReadable, EOFError
+            break
+          end while true
+        end
+      else
+        sleep 0.1
+      end
+      diff = tlimit - Time.now
     end
     if !waited
       Process.kill(:KILL, pid)

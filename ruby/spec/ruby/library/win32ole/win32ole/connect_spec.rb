@@ -1,7 +1,5 @@
-require File.expand_path('../../fixtures/classes', __FILE__)
-
 platform_is :windows do
-  require 'win32ole'
+  require_relative '../fixtures/classes'
 
   describe "WIN32OLE.connect" do
     it "creates WIN32OLE object given valid argument" do

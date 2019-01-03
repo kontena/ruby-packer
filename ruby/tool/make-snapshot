@@ -6,6 +6,7 @@ require 'digest/sha2'
 require 'fileutils'
 require 'shellwords'
 require 'tmpdir'
+require 'pathname'
 require File.expand_path("../vcs", __FILE__)
 require File.expand_path("../colorize", __FILE__)
 STDOUT.sync = true
@@ -17,6 +18,7 @@ $keep_temp ||= nil
 $patch_file ||= nil
 $packages ||= nil
 $digests ||= nil
+$s3 ||= nil
 $tooldir = File.expand_path("..", __FILE__)
 $unicode_version = nil if ($unicode_version ||= nil) == ""
 $colorize = Colorize.new
@@ -32,6 +34,13 @@ options:
   -patch_file=PATCH     apply PATCH file after export
   -packages=PKG[,...]   make PKG packages (#{PACKAGES.keys.join(", ")})
   -digests=ALG[,...]    show ALG digests (#{DIGESTS.join(", ")})
+  -unicode_version=VER  Unicode version to generate encodings
+  -svn[=URL]            make snapshot from SVN repository
+                        (#{SVNURL})
+  -git[=URL]            make snapshot from GIT repository
+                        (#{GITURL})
+  -s3=PATH              s3 bucket path(default=tmp)
+  -help, --help         show this message
 version:
   trunk, stable, branches/*, tags/*, X.Y, X.Y.Z, X.Y.Z-pL
 each versions may be followed by optional @revision.
@@ -54,9 +63,14 @@ if gzip = ENV.delete("GZIP")
   PACKAGES["gzip"].concat(gzip.shellsplit)
 end
 
+if mflags = ENV["GNUMAKEFLAGS"] and /\A-(\S*)j\d*/ =~ mflags
+  mflags = mflags.gsub(/(\A|\s)(-\S*)j\d*/, '\1\2')
+  mflags.strip!
+  ENV["GNUMAKEFLAGS"] = (mflags unless mflags.empty?)
+end
 ENV["LC_ALL"] = ENV["LANG"] = "C"
-SVNURL = URI.parse("http://svn.ruby-lang.org/repos/ruby/")
-GITURL = URI.parse("git://github.com/ruby/ruby.git")
+SVNURL = URI.parse("https://svn.ruby-lang.org/repos/ruby/")
+GITURL = URI.parse("https://git.ruby-lang.org/ruby.git")
 RUBY_VERSION_PATTERN = /^\#define\s+RUBY_VERSION\s+"([\d.]+)"/
 
 ENV["VPATH"] ||= "include/ruby"
@@ -116,7 +130,7 @@ path = ENV["PATH"].split(File::PATH_SEPARATOR)
 end
 
 %w[BASERUBY RUBY MINIRUBY].each do |var|
-  `#{ENV[var]} --disable-gem -e1 2>&1`
+  %x[#{ENV[var]} --disable-gem -e1 2>&1]
   if $?.success?
     ENV[var] += ' --disable-gem'
   end
@@ -139,6 +153,46 @@ unless tmp = $exported
     Dir.chdir "/"
     FileUtils.rm_rf(tmp)
   } unless $keep_temp
+end
+
+def tar_create(tarball, dir)
+  require 'rubygems'
+  require 'rubygems/package'
+  require 'rubygems/package/tar_writer'
+  header = Gem::Package::TarHeader
+  dir_type = "5"
+  uname = gname = "ruby"
+  File.open(tarball, "wb") do |f|
+    w = Gem::Package::TarWriter.new(f)
+    Dir.glob("#{dir}/**/*", File::FNM_DOTMATCH) do |path|
+      next if File.basename(path) == "."
+      s = File.stat(path)
+      case
+      when s.file?
+        type = nil
+        size = s.size
+      when s.directory?
+        path += "/"
+        type = dir_type
+        size = 0
+      else
+        next
+      end
+      name, prefix = w.split_name(path)
+      h = header.new(name: name, prefix: prefix,
+                     mode: s.mode, size: size, mtime: s.mtime,
+                     uname: uname, gname: gname)
+      f.write(h)
+      if size > 0
+        IO.copy_stream(path, f)
+        f.write("\0" * (-size % 512))
+      end
+    end
+  end
+  true
+rescue => e
+  warn e.message
+  false
 end
 
 def package(vcs, rev, destdir, tmp = nil)
@@ -229,18 +283,6 @@ def package(vcs, rev, destdir, tmp = nil)
     v = v[0]
   end
 
-  unless File.exist?("#{v}/ChangeLog")
-    # get last revision from previous ChangeLog archive
-    last_ChangeLog = Dir["#{v}/doc/ChangeLog-*"].grep(/-(\d+)\z/) {|n| [$1.to_i, n]}.max[1]
-    open(last_ChangeLog) do |f|
-      f.readline
-      unless /\Ar(\d+) / =~ f.readline
-        abort "#{File.basename $0}: Cannot find revision from '#{last_ChangeLog}'"
-      end
-      vcs.export_changelog(url, $1.to_i, revision.to_i, "#{v}/ChangeLog")
-    end
-  end
-
   open("#{v}/revision.h", "wb") {|f| f.puts "#define RUBY_REVISION #{revision}"}
   version ||= (versionhdr = IO.read("#{v}/version.h"))[RUBY_VERSION_PATTERN, 1]
   version or return
@@ -284,6 +326,18 @@ def package(vcs, rev, destdir, tmp = nil)
   end
   def (clean = []).add(n) push(n); n end
   Dir.chdir(v) do
+    unless File.exist?("ChangeLog")
+      # get last revision from previous ChangeLog archive
+      last_ChangeLog = Dir["doc/ChangeLog-*"].grep(/-(\d+)\z/) {|n| [$1.to_i, n]}.max[1]
+      open(last_ChangeLog) do |f|
+        f.readline
+        unless /\Ar(\d+) / =~ f.readline
+          abort "#{File.basename $0}: Cannot find revision from '#{last_ChangeLog}'"
+        end
+        vcs.export_changelog(url, $1.to_i, revision.to_i, "ChangeLog")
+      end
+    end
+
     File.open(clean.add("cross.rb"), "w") do |f|
       f.puts "Object.__send__(:remove_const, :CROSS_COMPILING) if defined?(CROSS_COMPILING)"
       f.puts "CROSS_COMPILING=true"
@@ -403,7 +457,7 @@ _touch-unicode-files:
       else
         tarball = "#{$archname||v}.tar"
         print "creating tarball... #{tarball}"
-        if system("tar", "cf", tarball, v)
+        if tar_create(tarball, v)
           puts $colorize.pass(" done")
         else
           puts $colorize.fail(" failed")
@@ -455,6 +509,11 @@ revisions.collect {|rev| package(vcs, rev, destdir, tmp)}.flatten.each do |name|
     next
   end
   str = open(name, "rb") {|f| f.read}
+  if $s3
+    %x[aws s3 cp #{name} s3://ftp.r-l.o/pub/#{$s3}/#{Pathname(name).basename}]
+    FileUtils.rm_f name
+    name = "https://s3.amazonaws.com/ftp.r-l.o/pub/#{$s3}/#{Pathname(name).basename}"
+  end
   puts "* #{$colorize.pass(name)}"
   puts "  SIZE:   #{str.bytesize} bytes"
   $digests.each do |alg|

@@ -23,29 +23,15 @@ class Gem::PathSupport
   # hashtable, or defaults to ENV, the system environment.
   #
   def initialize(env)
-    @home     = env["GEM_HOME"] || Gem.default_dir
+    @home = env["GEM_HOME"] || Gem.default_dir
 
-    # --------- [Enclose.io Hack start] ---------
-    # WE DO NOT ACCEPT OUTSIDE GEM PATHS
-    unless env['ENCLOSE_IO_RUBYC_1ST_PASS']
-      @home = Gem.default_dir unless 0 == @home.index('/__enclose_io_memfs__')
+    if File::ALT_SEPARATOR
+      @home = @home.gsub(File::ALT_SEPARATOR, File::SEPARATOR)
     end
-    # --------- [Enclose.io Hack end] ---------
 
-    if File::ALT_SEPARATOR then
-      @home   = @home.gsub(File::ALT_SEPARATOR, File::SEPARATOR)
-    end
+    @home = expand(@home)
 
     @path = split_gem_path env["GEM_PATH"], @home
-
-    # --------- [Enclose.io Hack start] ---------
-    # WE DO NOT ACCEPT OUTSIDE GEM PATHS
-    unless env['ENCLOSE_IO_RUBYC_1ST_PASS']
-      @path.keep_if do |x|
-        0 == x.index('/__enclose_io_memfs__')
-      end
-    end
-    # --------- [Enclose.io Hack end] ---------
 
     @spec_cache_dir = env["GEM_SPEC_CACHE"] || Gem.default_spec_cache_dir
 
@@ -57,7 +43,7 @@ class Gem::PathSupport
   ##
   # Split the Gem search path (as reported by Gem.path).
 
-  def split_gem_path gpaths, home
+  def split_gem_path(gpaths, home)
     # FIX: it should be [home, *path], not [*path, home]
 
     gem_path = []
@@ -70,7 +56,7 @@ class Gem::PathSupport
         gem_path += default_path
       end
 
-      if File::ALT_SEPARATOR then
+      if File::ALT_SEPARATOR
         gem_path.map! do |this_path|
           this_path.gsub File::ALT_SEPARATOR, File::SEPARATOR
         end
@@ -81,7 +67,7 @@ class Gem::PathSupport
       gem_path = default_path
     end
 
-    gem_path.uniq
+    gem_path.map { |path| expand(path) }.uniq
   end
 
   # Return the default Gem path
@@ -92,5 +78,13 @@ class Gem::PathSupport
       gem_path << APPLE_GEM_HOME
     end
     gem_path
+  end
+
+  def expand(path)
+    if File.directory?(path)
+      File.realpath(path)
+    else
+      path
+    end
   end
 end

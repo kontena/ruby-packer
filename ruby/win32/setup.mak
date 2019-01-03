@@ -20,8 +20,9 @@ MAKE = $(MAKE) -f $(MAKEFILE)
 MAKEFILE = Makefile
 !endif
 CPU = PROCESSOR_LEVEL
-CC = cl -nologo
+CC = $(CC) -nologo
 CPP = $(CC) -EP
+AS = $(AS) -nologo
 
 all: -prologue- -generic- -epilogue-
 i386-mswin32: -prologue- -i386- -epilogue-
@@ -60,6 +61,9 @@ USE_RUBYGEMS = $(USE_RUBYGEMS)
 !if defined(ENABLE_DEBUG_ENV)
 ENABLE_DEBUG_ENV = $(ENABLE_DEBUG_ENV)
 !endif
+!if defined(MJIT_SUPPORT)
+MJIT_SUPPORT = $(MJIT_SUPPORT)
+!endif
 
 # TOOLS
 <<
@@ -72,7 +76,7 @@ ENABLE_DEBUG_ENV = $(ENABLE_DEBUG_ENV)
 $(BANG)if "$$(BASERUBY)" == ""
 BASERUBY = echo executable host ruby is required.  use --with-baseruby option.^& exit 1
 HAVE_BASERUBY = no
-$(BANG)elseif [$$(BASERUBY) -eexit 2> nul] == 0
+$(BANG)elseif [($$(BASERUBY) -eexit) > nul 2> nul] == 0
 HAVE_BASERUBY = yes
 $(BANG)else
 HAVE_BASERUBY = no
@@ -234,7 +238,11 @@ MACHINE = x86
 # XLDFLAGS =
 # RFLAGS = -r
 # EXTLIBS =
-CC = cl -nologo
+CC = $(CC)
+AS = $(AS)
+<<
+	@(for %I in (cl.exe) do @set MJIT_CC=%~$$PATH:I) && (call echo MJIT_CC = "%MJIT_CC:\=/%" -nologo>>$(MAKEFILE))
+	@type << >>$(MAKEFILE)
 
 $(BANG)include $$(srcdir)/win32/Makefile.sub
 <<

@@ -2,7 +2,7 @@
 #
 #   sync.rb - 2 phase lock with counter
 #       $Release Version: 1.0$
-#       $Revision: 56183 $
+#       $Revision: 66357 $
 #       by Keiju ISHITSUKA(keiju@ishitsuka.com)
 #
 # --
@@ -37,10 +37,6 @@
 #   Sync#synchronize(mode) {...}
 #
 #
-
-unless defined? Thread
-  raise "Thread not available for this ruby interpreter"
-end
 
 ##
 # A module that provides a two-phase lock with a counter.
@@ -320,6 +316,9 @@ Synchronizer_m = Sync_m
 # details.
 
 class Sync
+
+  VERSION = "0.5.0"
+
   include Sync_m
 end
 

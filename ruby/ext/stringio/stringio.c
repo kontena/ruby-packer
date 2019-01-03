@@ -2,7 +2,7 @@
 
   stringio.c -
 
-  $Author: kazu $
+  $Author: nobu $
   $RoughId: stringio.c,v 1.13 2002/03/14 03:24:18 nobu Exp $
   created at: Tue Feb 19 04:10:38 JST 2002
 
@@ -1622,6 +1622,7 @@ strio_set_encoding(int argc, VALUE *argv, VALUE self)
 void
 Init_stringio(void)
 {
+#undef rb_intern
     VALUE StringIO = rb_define_class("StringIO", rb_cData);
 
     rb_include_module(StringIO, rb_mEnumerable);

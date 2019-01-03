@@ -1,15 +1,15 @@
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../shared/now', __FILE__)
-require File.expand_path('../shared/local', __FILE__)
-require File.expand_path('../shared/time_params', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'shared/now'
+require_relative 'shared/local'
+require_relative 'shared/time_params'
 
 describe "Time.new" do
-  it_behaves_like(:time_now, :new)
+  it_behaves_like :time_now, :new
 end
 
 describe "Time.new" do
-  it_behaves_like(:time_local, :new)
-  it_behaves_like(:time_params, :new)
+  it_behaves_like :time_local, :new
+  it_behaves_like :time_params, :new
 end
 
 describe "Time.new with a utc_offset argument" do
@@ -47,6 +47,14 @@ describe "Time.new with a utc_offset argument" do
 
   it "returns a Time with a UTC offset specified as -HH:MM" do
     Time.new(2000, 1, 1, 0, 0, 0, "-04:10").utc_offset.should == -15000
+  end
+
+  it "returns a Time with a UTC offset specified as +HH:MM:SS" do
+    Time.new(2000, 1, 1, 0, 0, 0, "+05:30:37").utc_offset.should == 19837
+  end
+
+  it "returns a Time with a UTC offset specified as -HH:MM" do
+    Time.new(2000, 1, 1, 0, 0, 0, "-04:10:43").utc_offset.should == -15043
   end
 
   describe "with an argument that responds to #to_str" do
@@ -95,5 +103,25 @@ describe "Time.new with a utc_offset argument" do
   it "raises ArgumentError if the argument represents a value greater than or equal to 86400 seconds" do
     Time.new(2000, 1, 1, 0, 0, 0, 86400 - 1).utc_offset.should == (86400 - 1)
     lambda { Time.new(2000, 1, 1, 0, 0, 0, 86400) }.should raise_error(ArgumentError)
+  end
+
+  it "raises ArgumentError if the seconds argument is negative" do
+    lambda { Time.new(2000, 1, 1, 0, 0, -1) }.should raise_error(ArgumentError)
+  end
+
+  it "raises ArgumentError if the utc_offset argument is greater than or equal to 10e9" do
+    lambda { Time.new(2000, 1, 1, 0, 0, 0, 1000000000) }.should raise_error(ArgumentError)
+  end
+end
+
+ruby_version_is "2.6" do
+  describe "Time.new with a timezone argument" do
+    it "returns a Time correspoinding to UTC time returned by local_to_utc" do
+      zone = TimeSpecs::Timezone.new("Asia/Colombo", "MMT", (5*3600+30*60))
+      t = Time.new(2000, 1, 1, 12, 0, 0, zone)
+      t.to_a[0, 6].should == [0, 0, 12, 1, 1, 2000]
+      t.utc_offset.should == 19800
+      t.zone.should == zone
+    end
   end
 end

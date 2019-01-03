@@ -12,12 +12,12 @@
 # This program is free software. You can re-distribute and/or
 # modify this program under the same terms as Ruby itself.
 #
-# $Id: smtp.rb 59381 2017-07-20 23:34:03Z kazu $
+# $Id: smtp.rb 65505 2018-11-02 17:52:33Z marcandre $
 #
 # See Net::SMTP for documentation.
 #
 
-require 'net/protocol'
+require_relative 'protocol'
 require 'digest/md5'
 require 'timeout'
 begin
@@ -169,7 +169,7 @@ module Net
   #
   class SMTP < Protocol
 
-    Revision = %q$Revision: 59381 $.split[1]
+    Revision = %q$Revision: 65505 $.split[1]
 
     # The default SMTP port number, 25.
     def SMTP.default_port

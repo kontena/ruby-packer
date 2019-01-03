@@ -2,7 +2,7 @@
 
   variable.c -
 
-  $Author: naruse $
+  $Author: nobu $
   created at: Tue Apr 19 23:55:15 JST 1994
 
   Copyright (C) 1993-2007 Yukihiro Matsumoto
@@ -11,18 +11,22 @@
 
 **********************************************************************/
 
-#include "internal.h"
+#include "ruby/encoding.h"
 #include "ruby/st.h"
 #include "ruby/util.h"
+#include "internal.h"
 #include "id_table.h"
 #include "constant.h"
 #include "id.h"
 #include "ccan/list/list.h"
 #include "id_table.h"
 #include "debug_counter.h"
+#include "vm_core.h"
+#include "transient_heap.h"
 
-struct rb_id_table *rb_global_tbl;
+static struct rb_id_table *rb_global_tbl;
 static ID autoload, classpath, tmp_classpath, classid;
+static VALUE autoload_featuremap; /* feature => autoload_i */
 
 static void check_before_mod_set(VALUE, ID, VALUE, const char *);
 static void setup_const_entry(rb_const_entry_t *, VALUE, VALUE, rb_const_flag_t);
@@ -33,7 +37,7 @@ static st_table *generic_iv_tbl_compat;
 /* per-object */
 struct gen_ivtbl {
     uint32_t numiv;
-    VALUE ivptr[1]; /* flexible array */
+    VALUE ivptr[FLEX_ARY_LEN];
 };
 
 struct ivar_update {
@@ -479,13 +483,25 @@ struct rb_global_variable {
     struct trace_var *trace;
 };
 
-struct rb_global_entry*
-rb_global_entry(ID id)
+static struct rb_global_entry*
+rb_find_global_entry(ID id)
 {
     struct rb_global_entry *entry;
     VALUE data;
 
     if (!rb_id_table_lookup(rb_global_tbl, id, &data)) {
+        return NULL;
+    }
+    entry = (struct rb_global_entry *)data;
+    ASSUME(entry != NULL);
+    return entry;
+}
+
+MJIT_FUNC_EXPORTED struct rb_global_entry*
+rb_global_entry(ID id)
+{
+    struct rb_global_entry *entry = rb_find_global_entry(id);
+    if (!entry) {
 	struct rb_global_variable *var;
 	entry = ALLOC(struct rb_global_entry);
 	var = ALLOC(struct rb_global_variable);
@@ -500,9 +516,6 @@ rb_global_entry(ID id)
 	var->block_trace = 0;
 	var->trace = 0;
 	rb_id_table_insert(rb_global_tbl, id, (VALUE)entry);
-    }
-    else {
-	entry = (struct rb_global_entry *)data;
     }
     return entry;
 }
@@ -606,11 +619,34 @@ global_id(const char *name)
     if (name[0] == '$') id = rb_intern(name);
     else {
 	size_t len = strlen(name);
-	char *buf = ALLOCA_N(char, len+1);
+        VALUE vbuf = 0;
+        char *buf = ALLOCV_N(char, vbuf, len+1);
 	buf[0] = '$';
 	memcpy(buf+1, name, len);
 	id = rb_intern2(buf, len+1);
+        ALLOCV_END(vbuf);
     }
+    return id;
+}
+
+static ID
+find_global_id(const char *name)
+{
+    ID id;
+    size_t len = strlen(name);
+
+    if (name[0] == '$') {
+        id = rb_check_id_cstr(name, len, NULL);
+    }
+    else {
+        VALUE vbuf = 0;
+        char *buf = ALLOCV_N(char, vbuf, len+1);
+        buf[0] = '$';
+        memcpy(buf+1, name, len);
+        id = rb_check_id_cstr(buf, len+1, NULL);
+        ALLOCV_END(vbuf);
+    }
+
     return id;
 }
 
@@ -789,7 +825,7 @@ rb_f_untrace_var(int argc, const VALUE *argv)
     return Qnil;
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_gvar_get(struct rb_global_entry *entry)
 {
     struct rb_global_variable *var = entry->var;
@@ -822,7 +858,7 @@ trace_en(struct rb_global_variable *var)
     return Qnil;		/* not reached */
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_gvar_set(struct rb_global_entry *entry, VALUE val)
 {
     struct trace_data trace;
@@ -852,16 +888,40 @@ VALUE
 rb_gv_get(const char *name)
 {
     struct rb_global_entry *entry;
+    ID id = find_global_id(name);
 
-    entry = rb_global_entry(global_id(name));
+    if (!id) {
+        rb_warning("global variable `%s' not initialized", name);
+        return Qnil;
+    }
+
+    entry = rb_global_entry(id);
     return rb_gvar_get(entry);
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_gvar_defined(struct rb_global_entry *entry)
 {
     if (entry->var->getter == rb_gvar_undef_getter) return Qfalse;
     return Qtrue;
+}
+
+rb_gvar_getter_t *
+rb_gvar_getter_function_of(const struct rb_global_entry *entry)
+{
+    return entry->var->getter;
+}
+
+rb_gvar_setter_t *
+rb_gvar_setter_function_of(const struct rb_global_entry *entry)
+{
+    return entry->var->setter;
+}
+
+bool
+rb_gvar_is_traced(const struct rb_global_entry *entry)
+{
+    return !!entry->var->trace;
 }
 
 static enum rb_id_table_iterator_result
@@ -1000,7 +1060,7 @@ generic_ivar_get(VALUE obj, ID id, VALUE undef)
 static size_t
 gen_ivtbl_bytes(size_t n)
 {
-    return sizeof(struct gen_ivtbl) + n * sizeof(VALUE) - sizeof(VALUE);
+    return offsetof(struct gen_ivtbl, ivptr) + n * sizeof(VALUE);
 }
 
 static struct gen_ivtbl *
@@ -1312,61 +1372,133 @@ generic_ivar_set(VALUE obj, ID id, VALUE val)
     RB_OBJ_WRITTEN(obj, Qundef, val);
 }
 
-VALUE
-rb_ivar_set(VALUE obj, ID id, VALUE val)
+static VALUE *
+obj_ivar_heap_alloc(VALUE obj, size_t newsize)
+{
+    VALUE *newptr = rb_transient_heap_alloc(obj, sizeof(VALUE) * newsize);
+
+    if (newptr != NULL) {
+        ROBJ_TRANSIENT_SET(obj);
+    }
+    else {
+        ROBJ_TRANSIENT_UNSET(obj);
+        newptr = ALLOC_N(VALUE, newsize);
+    }
+    return newptr;
+}
+
+static VALUE *
+obj_ivar_heap_realloc(VALUE obj, int32_t len, size_t newsize)
+{
+    VALUE *newptr;
+    int i;
+
+    if (ROBJ_TRANSIENT_P(obj)) {
+        const VALUE *orig_ptr = ROBJECT(obj)->as.heap.ivptr;
+        if ((newptr = obj_ivar_heap_alloc(obj, newsize)) != NULL) {
+            /* ok */
+        }
+        else {
+            newptr = ALLOC_N(VALUE, newsize);
+            ROBJ_TRANSIENT_UNSET(obj);
+        }
+        ROBJECT(obj)->as.heap.ivptr = newptr;
+        for (i=0; i<(int)len; i++) {
+            newptr[i] = orig_ptr[i];
+        }
+    }
+    else {
+        REALLOC_N(ROBJECT(obj)->as.heap.ivptr, VALUE, newsize);
+        newptr = ROBJECT(obj)->as.heap.ivptr;
+    }
+
+    return newptr;
+}
+
+#if USE_TRANSIENT_HEAP
+void
+rb_obj_transient_heap_evacuate(VALUE obj, int promote)
+{
+    if (ROBJ_TRANSIENT_P(obj)) {
+        uint32_t len = ROBJECT_NUMIV(obj);
+        const VALUE *old_ptr = ROBJECT_IVPTR(obj);
+        VALUE *new_ptr;
+
+        if (promote) {
+            new_ptr = ALLOC_N(VALUE, len);
+            ROBJ_TRANSIENT_UNSET(obj);
+        }
+        else {
+            new_ptr = obj_ivar_heap_alloc(obj, len);
+        }
+        MEMCPY(new_ptr, old_ptr, VALUE, len);
+        ROBJECT(obj)->as.heap.ivptr = new_ptr;
+    }
+}
+#endif
+
+static VALUE
+obj_ivar_set(VALUE obj, ID id, VALUE val)
 {
     struct ivar_update ivup;
     uint32_t i, len;
 
+    ivup.iv_extended = 0;
+    ivup.u.iv_index_tbl = iv_index_tbl_make(obj);
+    iv_index_tbl_extend(&ivup, id);
+    len = ROBJECT_NUMIV(obj);
+    if (len <= ivup.index) {
+        VALUE *ptr = ROBJECT_IVPTR(obj);
+        if (ivup.index < ROBJECT_EMBED_LEN_MAX) {
+            RBASIC(obj)->flags |= ROBJECT_EMBED;
+            ptr = ROBJECT(obj)->as.ary;
+            for (i = 0; i < ROBJECT_EMBED_LEN_MAX; i++) {
+                ptr[i] = Qundef;
+            }
+        }
+        else {
+            VALUE *newptr;
+            uint32_t newsize = iv_index_tbl_newsize(&ivup);
+
+            if (RBASIC(obj)->flags & ROBJECT_EMBED) {
+                newptr = obj_ivar_heap_alloc(obj, newsize);
+                MEMCPY(newptr, ptr, VALUE, len);
+                RBASIC(obj)->flags &= ~ROBJECT_EMBED;
+                ROBJECT(obj)->as.heap.ivptr = newptr;
+            }
+            else {
+                newptr = obj_ivar_heap_realloc(obj, len, newsize);
+            }
+            for (; len < newsize; len++) {
+                newptr[len] = Qundef;
+            }
+            ROBJECT(obj)->as.heap.numiv = newsize;
+            ROBJECT(obj)->as.heap.iv_index_tbl = ivup.u.iv_index_tbl;
+        }
+    }
+    RB_OBJ_WRITE(obj, &ROBJECT_IVPTR(obj)[ivup.index], val);
+
+    return val;
+}
+
+VALUE
+rb_ivar_set(VALUE obj, ID id, VALUE val)
+{
     RB_DEBUG_COUNTER_INC(ivar_set_base);
 
     rb_check_frozen(obj);
 
     switch (BUILTIN_TYPE(obj)) {
       case T_OBJECT:
-        ivup.iv_extended = 0;
-        ivup.u.iv_index_tbl = iv_index_tbl_make(obj);
-        iv_index_tbl_extend(&ivup, id);
-        len = ROBJECT_NUMIV(obj);
-        if (len <= ivup.index) {
-            VALUE *ptr = ROBJECT_IVPTR(obj);
-            if (ivup.index < ROBJECT_EMBED_LEN_MAX) {
-                RBASIC(obj)->flags |= ROBJECT_EMBED;
-                ptr = ROBJECT(obj)->as.ary;
-                for (i = 0; i < ROBJECT_EMBED_LEN_MAX; i++) {
-                    ptr[i] = Qundef;
-                }
-            }
-            else {
-                VALUE *newptr;
-                uint32_t newsize = iv_index_tbl_newsize(&ivup);
-
-                if (RBASIC(obj)->flags & ROBJECT_EMBED) {
-                    newptr = ALLOC_N(VALUE, newsize);
-                    MEMCPY(newptr, ptr, VALUE, len);
-                    RBASIC(obj)->flags &= ~ROBJECT_EMBED;
-                    ROBJECT(obj)->as.heap.ivptr = newptr;
-                }
-                else {
-                    REALLOC_N(ROBJECT(obj)->as.heap.ivptr, VALUE, newsize);
-                    newptr = ROBJECT(obj)->as.heap.ivptr;
-                }
-                for (; len < newsize; len++)
-                    newptr[len] = Qundef;
-                ROBJECT(obj)->as.heap.numiv = newsize;
-                ROBJECT(obj)->as.heap.iv_index_tbl = ivup.u.iv_index_tbl;
-            }
-        }
-        RB_OBJ_WRITE(obj, &ROBJECT_IVPTR(obj)[ivup.index], val);
-	break;
+        return obj_ivar_set(obj, id, val);
       case T_CLASS:
       case T_MODULE:
-	if (!RCLASS_IV_TBL(obj)) RCLASS_IV_TBL(obj) = st_init_numtable();
-	rb_class_ivar_set(obj, id, val);
+        if (!RCLASS_IV_TBL(obj)) RCLASS_IV_TBL(obj) = st_init_numtable();
+        rb_class_ivar_set(obj, id, val);
         break;
       default:
-	generic_ivar_set(obj, id, val);
-	break;
+        generic_ivar_set(obj, id, val);
+        break;
     }
     return val;
 }
@@ -1665,9 +1797,11 @@ check_id_type(VALUE obj, VALUE *pname,
 /*
  *  call-seq:
  *     obj.remove_instance_variable(symbol)    -> obj
+ *     obj.remove_instance_variable(string)    -> obj
  *
  *  Removes the named instance variable from <i>obj</i>, returning that
  *  variable's value.
+ *  String arguments are converted to symbols.
  *
  *     class Dummy
  *       attr_reader :var
@@ -1729,7 +1863,7 @@ rb_obj_remove_instance_variable(VALUE obj, VALUE name)
   not_defined:
     rb_name_err_raise("instance variable %1$s not defined",
 		      obj, name);
-    UNREACHABLE;
+    UNREACHABLE_RETURN(Qnil);
 }
 
 NORETURN(static void uninitialized_constant(VALUE, VALUE));
@@ -1747,7 +1881,7 @@ uninitialized_constant(VALUE klass, VALUE name)
 VALUE
 rb_const_missing(VALUE klass, VALUE name)
 {
-    VALUE value = rb_funcallv(klass, rb_intern("const_missing"), 1, &name);
+    VALUE value = rb_funcallv(klass, idConst_missing, 1, &name);
     rb_vm_inc_const_missing_count();
     return value;
 }
@@ -1792,10 +1926,15 @@ rb_const_missing(VALUE klass, VALUE name)
 VALUE
 rb_mod_const_missing(VALUE klass, VALUE name)
 {
+    VALUE ref = GET_EC()->private_const_reference;
     rb_vm_pop_cfunc_frame();
+    if (ref) {
+	rb_name_err_raise("private constant %2$s::%1$s referenced",
+			  ref, name);
+    }
     uninitialized_constant(klass, name);
 
-    UNREACHABLE;
+    UNREACHABLE_RETURN(Qnil);
 }
 
 static void
@@ -1840,33 +1979,53 @@ autoload_data(VALUE mod, ID id)
     return (VALUE)val;
 }
 
+struct autoload_const {
+    struct list_node cnode; /* <=> autoload_data_i.constants */
+    VALUE mod;
+    VALUE ad; /* autoload_data_i */
+    VALUE value;
+    ID id;
+    int safe_level;
+    rb_const_flag_t flag;
+};
+
 /* always on stack, no need to mark */
 struct autoload_state {
-    struct autoload_data_i *ele;
-    VALUE mod;
+    struct autoload_const *ac;
     VALUE result;
-    ID id;
     VALUE thread;
-    union {
-	struct list_node node;
-	struct list_head head;
-    } waitq;
+    struct list_node waitq;
 };
 
 struct autoload_data_i {
     VALUE feature;
-    int safe_level;
-    rb_const_flag_t flag;
-    VALUE value;
     struct autoload_state *state; /* points to on-stack struct */
+    rb_serial_t fork_gen;
+    struct list_head constants; /* <=> autoload_const.cnode */
 };
 
 static void
 autoload_i_mark(void *ptr)
 {
     struct autoload_data_i *p = ptr;
+
     rb_gc_mark(p->feature);
-    rb_gc_mark(p->value);
+
+    /* allow GC to free us if no modules refer to this via autoload_const.ad */
+    if (list_empty(&p->constants)) {
+        rb_hash_delete(autoload_featuremap, p->feature);
+    }
+}
+
+static void
+autoload_i_free(void *ptr)
+{
+    struct autoload_data_i *p = ptr;
+
+    /* we may leak some memory at VM shutdown time, no big deal */
+    if (list_empty(&p->constants)) {
+	xfree(p);
+    }
 }
 
 static size_t
@@ -1877,12 +2036,55 @@ autoload_i_memsize(const void *ptr)
 
 static const rb_data_type_t autoload_data_i_type = {
     "autoload_i",
-    {autoload_i_mark, RUBY_TYPED_DEFAULT_FREE, autoload_i_memsize,},
+    {autoload_i_mark, autoload_i_free, autoload_i_memsize,},
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
 
-#define check_autoload_data(av) \
-    (struct autoload_data_i *)rb_check_typeddata((av), &autoload_data_i_type)
+static void
+autoload_c_mark(void *ptr)
+{
+    struct autoload_const *ac = ptr;
+
+    rb_gc_mark(ac->mod);
+    rb_gc_mark(ac->ad);
+    rb_gc_mark(ac->value);
+}
+
+static void
+autoload_c_free(void *ptr)
+{
+    struct autoload_const *ac = ptr;
+    list_del(&ac->cnode);
+    xfree(ac);
+}
+
+static size_t
+autoload_c_memsize(const void *ptr)
+{
+    return sizeof(struct autoload_const);
+}
+
+static const rb_data_type_t autoload_const_type = {
+    "autoload_const",
+    {autoload_c_mark, autoload_c_free, autoload_c_memsize,},
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+};
+
+static struct autoload_data_i *
+get_autoload_data(VALUE acv, struct autoload_const **acp)
+{
+    struct autoload_const *ac = rb_check_typeddata(acv, &autoload_const_type);
+    struct autoload_data_i *ele;
+
+    ele = rb_check_typeddata(ac->ad, &autoload_data_i_type);
+    /* do not reach across stack for ->state after forking: */
+    if (ele && ele->state && ele->fork_gen != GET_VM()->fork_gen) {
+        ele->state = 0;
+        ele->fork_gen = 0;
+    }
+    if (acp) *acp = ac;
+    return ele;
+}
 
 RUBY_FUNC_EXPORTED void
 rb_autoload(VALUE mod, ID id, const char *file)
@@ -1930,17 +2132,42 @@ rb_autoload_str(VALUE mod, ID id, VALUE file)
 	DATA_PTR(av) = tbl = st_init_numtable();
     }
 
-    ad = TypedData_Make_Struct(0, struct autoload_data_i, &autoload_data_i_type, ele);
     if (OBJ_TAINTED(file)) {
 	file = rb_str_dup(file);
 	FL_UNSET(file, FL_TAINT);
     }
-    ele->feature = rb_fstring(file);
-    ele->safe_level = rb_safe_level();
-    ele->value = Qundef;
-    ele->state = 0;
-    ele->flag = CONST_PUBLIC;
-    st_insert(tbl, (st_data_t)id, (st_data_t)ad);
+    file = rb_fstring(file);
+    if (!autoload_featuremap) {
+        autoload_featuremap = rb_hash_new_compare_by_id();
+        rb_obj_hide(autoload_featuremap);
+        rb_gc_register_mark_object(autoload_featuremap);
+    }
+    ad = rb_hash_aref(autoload_featuremap, file);
+    if (NIL_P(ad)) {
+        ad = TypedData_Make_Struct(0, struct autoload_data_i,
+                                    &autoload_data_i_type, ele);
+        ele->feature = file;
+        ele->state = 0;
+        list_head_init(&ele->constants);
+        rb_hash_aset(autoload_featuremap, file, ad);
+    }
+    else {
+        ele = rb_check_typeddata(ad, &autoload_data_i_type);
+    }
+    {
+        VALUE acv;
+        struct autoload_const *ac;
+        acv = TypedData_Make_Struct(0, struct autoload_const,
+                                    &autoload_const_type, ac);
+        ac->mod = mod;
+        ac->id = id;
+        ac->value = Qundef;
+        ac->safe_level = rb_safe_level();
+        ac->flag = CONST_PUBLIC;
+        ac->ad = ad;
+        list_add_tail(&ele->constants, &ac->cnode);
+        st_insert(tbl, (st_data_t)id, (st_data_t)acv);
+    }
 }
 
 static void
@@ -1950,8 +2177,22 @@ autoload_delete(VALUE mod, ID id)
 
     if (st_lookup(RCLASS_IV_TBL(mod), (st_data_t)autoload, &val)) {
 	struct st_table *tbl = check_autoload_table((VALUE)val);
+	struct autoload_data_i *ele;
+	struct autoload_const *ac;
 
 	st_delete(tbl, &n, &load);
+	ele = get_autoload_data((VALUE)load, &ac);
+	VM_ASSERT(ele);
+	if (ele) {
+	    VM_ASSERT(!list_empty(&ele->constants));
+	}
+
+	/*
+	 * we must delete here to avoid "already initialized" warnings
+	 * with parallel autoload.  Using list_del_init here so list_del
+	 * works in autoload_c_free
+	 */
+	list_del_init(&ac->cnode);
 
 	if (tbl->num_entries == 0) {
 	    n = autoload;
@@ -1977,12 +2218,13 @@ reset_safe(VALUE safe)
 static VALUE
 check_autoload_required(VALUE mod, ID id, const char **loadingpath)
 {
-    VALUE file, load;
+    VALUE file;
+    VALUE load = autoload_data(mod, id);
     struct autoload_data_i *ele;
     const char *loading;
     int safe;
 
-    if (!(load = autoload_data(mod, id)) || !(ele = check_autoload_data(load))) {
+    if (!load || !(ele = get_autoload_data(load, 0))) {
 	return 0;
     }
     file = ele->feature;
@@ -2014,22 +2256,24 @@ check_autoload_required(VALUE mod, ID id, const char **loadingpath)
     return 0;
 }
 
-int
+MJIT_FUNC_EXPORTED int
 rb_autoloading_value(VALUE mod, ID id, VALUE* value, rb_const_flag_t *flag)
 {
-    VALUE load;
+    VALUE load = autoload_data(mod, id);
     struct autoload_data_i *ele;
+    struct autoload_const *ac;
 
-    if (!(load = autoload_data(mod, id)) || !(ele = check_autoload_data(load))) {
-	return 0;
+    if (!load || !(ele = get_autoload_data(load, &ac))) {
+        return 0;
     }
+
     if (ele->state && ele->state->thread == rb_thread_current()) {
-	if (ele->value != Qundef) {
+	if (ac->value != Qundef) {
 	    if (value) {
-		*value = ele->value;
+		*value = ac->value;
 	    }
 	    if (flag) {
-		*flag = ele->flag;
+		*flag = ac->flag;
 	    }
 	    return 1;
 	}
@@ -2048,23 +2292,16 @@ autoload_defined_p(VALUE mod, ID id)
     return !rb_autoloading_value(mod, id, NULL, NULL);
 }
 
-struct autoload_const_set_args {
-    VALUE mod;
-    ID id;
-    VALUE value;
-    rb_const_flag_t flag;
-};
-
-static void const_tbl_update(struct autoload_const_set_args *);
+static void const_tbl_update(struct autoload_const *);
 
 static VALUE
 autoload_const_set(VALUE arg)
 {
-    struct autoload_const_set_args* args = (struct autoload_const_set_args *)arg;
-    VALUE klass = args->mod;
-    ID id = args->id;
-    check_before_mod_set(klass, id, args->value, "constant");
-    const_tbl_update(args);
+    struct autoload_const *ac = (struct autoload_const *)arg;
+    VALUE klass = ac->mod;
+    ID id = ac->id;
+    check_before_mod_set(klass, id, ac->value, "constant");
+    const_tbl_update(ac);
     return 0;			/* ignored */
 }
 
@@ -2072,10 +2309,13 @@ static VALUE
 autoload_require(VALUE arg)
 {
     struct autoload_state *state = (struct autoload_state *)arg;
+    struct autoload_const *ac = state->ac;
+    struct autoload_data_i *ele;
 
+    ele = rb_check_typeddata(ac->ad, &autoload_data_i_type);
     /* this may release GVL and switch threads: */
     state->result = rb_funcall(rb_vm_top_self(), rb_intern("require"), 1,
-			       state->ele->feature);
+			       ele->feature);
 
     return state->result;
 }
@@ -2085,36 +2325,38 @@ autoload_reset(VALUE arg)
 {
     struct autoload_state *state = (struct autoload_state *)arg;
     int need_wakeups = 0;
+    struct autoload_const *ac = state->ac;
+    struct autoload_data_i *ele;
 
-    if (state->ele->state == state) {
-	need_wakeups = 1;
-	state->ele->state = 0;
+    ele = rb_check_typeddata(ac->ad, &autoload_data_i_type);
+    if (ele->state == state) {
+        need_wakeups = 1;
+        ele->state = 0;
+        ele->fork_gen = 0;
     }
 
     /* At the last, move a value defined in autoload to constant table */
-    if (RTEST(state->result) && state->ele->value != Qundef) {
-	int safe_backup;
-	struct autoload_const_set_args args;
+    if (RTEST(state->result)) {
+        struct autoload_const *next;
+        int safe_backup = rb_safe_level();
 
-	args.mod = state->mod;
-	args.id = state->id;
-	args.value = state->ele->value;
-	args.flag = state->ele->flag;
-	safe_backup = rb_safe_level();
-	rb_set_safe_level_force(state->ele->safe_level);
-	rb_ensure(autoload_const_set, (VALUE)&args,
-	          reset_safe, (VALUE)safe_backup);
+        list_for_each_safe(&ele->constants, ac, next, cnode) {
+            if (ac->value != Qundef) {
+                rb_ensure(autoload_const_set, (VALUE)ac,
+                          reset_safe, (VALUE)safe_backup);
+            }
+        }
     }
 
     /* wakeup any waiters we had */
     if (need_wakeups) {
 	struct autoload_state *cur = 0, *nxt;
 
-	list_for_each_safe(&state->waitq.head, cur, nxt, waitq.node) {
+	list_for_each_safe((struct list_head *)&state->waitq, cur, nxt, waitq) {
 	    VALUE th = cur->thread;
 
 	    cur->thread = Qfalse;
-	    list_del_init(&cur->waitq.node); /* idempotent */
+	    list_del_init(&cur->waitq); /* idempotent */
 
 	    /*
 	     * cur is stored on the stack of cur->waiting_th,
@@ -2149,7 +2391,7 @@ autoload_sleep_done(VALUE arg)
     struct autoload_state *state = (struct autoload_state *)arg;
 
     if (state->thread != Qfalse && rb_thread_to_be_killed(state->thread)) {
-	list_del(&state->waitq.node); /* idempotent after list_del_init */
+	list_del(&state->waitq); /* idempotent after list_del_init */
     }
 
     return Qfalse;
@@ -2161,6 +2403,7 @@ rb_autoload_load(VALUE mod, ID id)
     VALUE load, result;
     const char *loading = 0, *src;
     struct autoload_data_i *ele;
+    struct autoload_const *ac;
     struct autoload_state state;
 
     if (!autoload_defined_p(mod, id)) return Qfalse;
@@ -2170,28 +2413,26 @@ rb_autoload_load(VALUE mod, ID id)
     if (src && loading && strcmp(src, loading) == 0) return Qfalse;
 
     /* set ele->state for a marker of autoloading thread */
-    if (!(ele = check_autoload_data(load))) {
+    if (!(ele = get_autoload_data(load, &ac))) {
 	return Qfalse;
     }
-
-    state.ele = ele;
-    state.mod = mod;
-    state.id = id;
+    state.ac = ac;
     state.thread = rb_thread_current();
     if (!ele->state) {
 	ele->state = &state;
+	ele->fork_gen = GET_VM()->fork_gen;
 
 	/*
 	 * autoload_reset will wake up any threads added to this
 	 * iff the GVL is released during autoload_require
 	 */
-	list_head_init(&state.waitq.head);
+	list_head_init((struct list_head *)&state.waitq);
     }
     else if (state.thread == ele->state->thread) {
 	return Qfalse;
     }
     else {
-	list_add_tail(&ele->state->waitq.head, &state.waitq.node);
+	list_add_tail((struct list_head *)&ele->state->waitq, &state.waitq);
 
 	rb_ensure(autoload_sleep, (VALUE)&state,
 		autoload_sleep_done, (VALUE)&state);
@@ -2217,10 +2458,10 @@ rb_autoload_p(VALUE mod, ID id)
     }
     load = check_autoload_required(mod, id, 0);
     if (!load) return Qnil;
-    return (ele = check_autoload_data(load)) ? ele->feature : Qnil;
+    return (ele = get_autoload_data(load, 0)) ? ele->feature : Qnil;
 }
 
-void
+MJIT_FUNC_EXPORTED void
 rb_const_warn_if_deprecated(const rb_const_entry_t *ce, VALUE klass, ID id)
 {
     if (RB_CONST_DEPRECATED_P(ce)) {
@@ -2257,8 +2498,9 @@ rb_const_search(VALUE klass, ID id, int exclude, int recurse, int visibility)
 
 	while ((ce = rb_const_lookup(tmp, id))) {
 	    if (visibility && RB_CONST_PRIVATE_P(ce)) {
-		rb_name_err_raise("private constant %2$s::%1$s referenced",
-				  tmp, ID2SYM(id));
+		if (BUILTIN_TYPE(tmp) == T_ICLASS) tmp = RBASIC(tmp)->klass;
+		GET_EC()->private_const_reference = tmp;
+		return Qundef;
 	    }
 	    rb_const_warn_if_deprecated(ce, tmp, id);
 	    value = ce->value;
@@ -2270,12 +2512,7 @@ rb_const_search(VALUE klass, ID id, int exclude, int recurse, int visibility)
 		continue;
 	    }
 	    if (exclude && tmp == rb_cObject && klass != rb_cObject) {
-#if 0
-		rb_warn("toplevel constant %"PRIsVALUE" referenced by %"PRIsVALUE"::%"PRIsVALUE"",
-			QUOTE_ID(id), rb_class_name(klass), QUOTE_ID(id));
-#else
-		return Qundef;
-#endif
+		goto not_found;
 	    }
 	    return value;
 	}
@@ -2288,6 +2525,8 @@ rb_const_search(VALUE klass, ID id, int exclude, int recurse, int visibility)
 	goto retry;
     }
 
+  not_found:
+    GET_EC()->private_const_reference = 0;
     return Qundef;
 }
 
@@ -2309,7 +2548,7 @@ rb_const_get_at(VALUE klass, ID id)
     return rb_const_get_0(klass, id, TRUE, FALSE, FALSE);
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_public_const_get_from(VALUE klass, ID id)
 {
     return rb_const_get_0(klass, id, TRUE, TRUE, TRUE);
@@ -2321,7 +2560,7 @@ rb_public_const_get(VALUE klass, ID id)
     return rb_const_get_0(klass, id, FALSE, TRUE, TRUE);
 }
 
-VALUE
+MJIT_FUNC_EXPORTED VALUE
 rb_public_const_get_at(VALUE klass, ID id)
 {
     return rb_const_get_0(klass, id, TRUE, FALSE, TRUE);
@@ -2489,16 +2728,11 @@ rb_const_list(void *data)
 VALUE
 rb_mod_constants(int argc, const VALUE *argv, VALUE mod)
 {
-    VALUE inherit;
+    bool inherit = TRUE;
 
-    if (argc == 0) {
-	inherit = Qtrue;
-    }
-    else {
-	rb_scan_args(argc, argv, "01", &inherit);
-    }
+    if (rb_check_arity(argc, 0, 1)) inherit = RTEST(argv[0]);
 
-    if (RTEST(inherit)) {
+    if (inherit) {
 	return rb_const_list(rb_mod_const_of(mod, 0));
     }
     else {
@@ -2559,7 +2793,7 @@ rb_const_defined_at(VALUE klass, ID id)
     return rb_const_defined_0(klass, id, TRUE, FALSE, FALSE);
 }
 
-int
+MJIT_FUNC_EXPORTED int
 rb_public_const_defined_from(VALUE klass, ID id)
 {
     return rb_const_defined_0(klass, id, TRUE, TRUE, TRUE);
@@ -2603,12 +2837,12 @@ rb_const_set(VALUE klass, ID id, VALUE val)
 	setup_const_entry(ce, klass, val, CONST_PUBLIC);
     }
     else {
-	struct autoload_const_set_args args;
-	args.mod = klass;
-	args.id = id;
-	args.value = val;
-	args.flag = CONST_PUBLIC;
-	const_tbl_update(&args);
+	struct autoload_const ac;
+	ac.mod = klass;
+	ac.id = id;
+	ac.value = val;
+	ac.flag = CONST_PUBLIC;
+	const_tbl_update(&ac);
     }
     /*
      * Resolve and cache class name immediately to resolve ambiguity
@@ -2640,12 +2874,12 @@ rb_const_set(VALUE klass, ID id, VALUE val)
 }
 
 static struct autoload_data_i *
-current_autoload_data(VALUE mod, ID id)
+current_autoload_data(VALUE mod, ID id, struct autoload_const **acp)
 {
     struct autoload_data_i *ele;
     VALUE load = autoload_data(mod, id);
     if (!load) return 0;
-    ele = check_autoload_data(load);
+    ele = get_autoload_data(load, acp);
     if (!ele) return 0;
     /* for autoloading thread, keep the defined value to autoloading storage */
     if (ele->state && (ele->state->thread == rb_thread_current())) {
@@ -2655,25 +2889,25 @@ current_autoload_data(VALUE mod, ID id)
 }
 
 static void
-const_tbl_update(struct autoload_const_set_args *args)
+const_tbl_update(struct autoload_const *ac)
 {
     VALUE value;
-    VALUE klass = args->mod;
-    VALUE val = args->value;
-    ID id = args->id;
+    VALUE klass = ac->mod;
+    VALUE val = ac->value;
+    ID id = ac->id;
     struct rb_id_table *tbl = RCLASS_CONST_TBL(klass);
-    rb_const_flag_t visibility = args->flag;
+    rb_const_flag_t visibility = ac->flag;
     rb_const_entry_t *ce;
 
     if (rb_id_table_lookup(tbl, id, &value)) {
 	ce = (rb_const_entry_t *)value;
 	if (ce->value == Qundef) {
-	    struct autoload_data_i *ele = current_autoload_data(klass, id);
+	    struct autoload_data_i *ele = current_autoload_data(klass, id, &ac);
 
 	    if (ele) {
 		rb_clear_constant_cache();
 
-		ele->value = val; /* autoload_i is non-WB-protected */
+		ac->value = val; /* autoload_i is non-WB-protected */
 		return;
 	    }
 	    /* otherwise, allow to override */
@@ -2738,7 +2972,7 @@ set_const_visibility(VALUE mod, int argc, const VALUE *argv,
     rb_const_entry_t *ce;
     ID id;
 
-    rb_frozen_class_p(mod);
+    rb_class_modify_check(mod);
     if (argc == 0) {
 	rb_warning("%"PRIsVALUE" with no argument is just ignored",
 		   QUOTE_ID(rb_frame_callee()));
@@ -2746,6 +2980,7 @@ set_const_visibility(VALUE mod, int argc, const VALUE *argv,
     }
 
     for (i = 0; i < argc; i++) {
+	struct autoload_const *ac;
 	VALUE val = argv[i];
 	id = rb_check_id(&val);
 	if (!id) {
@@ -2760,10 +2995,12 @@ set_const_visibility(VALUE mod, int argc, const VALUE *argv,
 	    ce->flag &= ~mask;
 	    ce->flag |= flag;
 	    if (ce->value == Qundef) {
-		struct autoload_data_i *ele = current_autoload_data(mod, id);
+		struct autoload_data_i *ele;
+
+		ele = current_autoload_data(mod, id, &ac);
 		if (ele) {
-		    ele->flag &= ~mask;
-		    ele->flag |= flag;
+		    ac->flag &= ~mask;
+		    ac->flag |= flag;
 		}
 	    }
 	}
@@ -2785,7 +3022,7 @@ rb_deprecate_constant(VALUE mod, const char *name)
     ID id;
     long len = strlen(name);
 
-    rb_frozen_class_p(mod);
+    rb_class_modify_check(mod);
     if (!(id = rb_check_id_cstr(name, len, NULL)) ||
 	!(ce = rb_const_lookup(mod, id))) {
 	rb_name_err_raise("constant %2$s::%1$s not defined",
@@ -2863,6 +3100,23 @@ cvar_front_klass(VALUE klass)
     return RCLASS_SUPER(klass);
 }
 
+static void
+cvar_overtaken(VALUE front, VALUE target, ID id)
+{
+    if (front && target != front) {
+	st_data_t did = (st_data_t)id;
+
+	if (RTEST(ruby_verbose)) {
+	    rb_warning("class variable % "PRIsVALUE" of %"PRIsVALUE" is overtaken by %"PRIsVALUE"",
+		       ID2SYM(id), rb_class_name(original_module(front)),
+		       rb_class_name(original_module(target)));
+	}
+	if (BUILTIN_TYPE(front) == T_CLASS) {
+	    st_delete(RCLASS_IV_TBL(front), &did, 0);
+	}
+    }
+}
+
 #define CVAR_FOREACH_ANCESTORS(klass, v, r) \
     for (klass = cvar_front_klass(klass); klass; klass = RCLASS_SUPER(klass)) { \
 	if (cvar_lookup_at(klass, id, (v))) { \
@@ -2883,18 +3137,7 @@ rb_cvar_set(VALUE klass, ID id, VALUE val)
     tmp = klass;
     CVAR_LOOKUP(0, {if (!front) front = klass; target = klass;});
     if (target) {
-	if (front && target != front) {
-	    st_data_t did = id;
-
-	    if (RTEST(ruby_verbose)) {
-		rb_warning("class variable %"PRIsVALUE" of %"PRIsVALUE" is overtaken by %"PRIsVALUE"",
-			   QUOTE_ID(id), rb_class_name(original_module(front)),
-			   rb_class_name(original_module(target)));
-	    }
-	    if (BUILTIN_TYPE(front) == T_CLASS) {
-		st_delete(RCLASS_IV_TBL(front),&did,0);
-	    }
-	}
+	cvar_overtaken(front, target, id);
     }
     else {
 	target = tmp;
@@ -2920,18 +3163,7 @@ rb_cvar_get(VALUE klass, ID id)
 	rb_name_err_raise("uninitialized class variable %1$s in %2$s",
 			  tmp, ID2SYM(id));
     }
-    if (front && target != front) {
-	st_data_t did = id;
-
-	if (RTEST(ruby_verbose)) {
-	    rb_warning("class variable %"PRIsVALUE" of %"PRIsVALUE" is overtaken by %"PRIsVALUE"",
-		       QUOTE_ID(id), rb_class_name(original_module(front)),
-		       rb_class_name(original_module(target)));
-	}
-	if (BUILTIN_TYPE(front) == T_CLASS) {
-	    st_delete(RCLASS_IV_TBL(front),&did,0);
-	}
-    }
+    cvar_overtaken(front, target, id);
     return (VALUE)value;
 }
 
@@ -3057,16 +3289,11 @@ cvar_list(void *data)
 VALUE
 rb_mod_class_variables(int argc, const VALUE *argv, VALUE mod)
 {
-    VALUE inherit;
+    bool inherit = TRUE;
     st_table *tbl;
 
-    if (argc == 0) {
-	inherit = Qtrue;
-    }
-    else {
-	rb_scan_args(argc, argv, "01", &inherit);
-    }
-    if (RTEST(inherit)) {
+    if (rb_check_arity(argc, 0, 1)) inherit = RTEST(argv[0]);
+    if (inherit) {
 	tbl = mod_cvar_of(mod, 0);
     }
     else {
@@ -3157,7 +3384,7 @@ rb_st_copy(VALUE obj, struct st_table *orig_tbl)
     return new_tbl;
 }
 
-rb_const_entry_t *
+MJIT_FUNC_EXPORTED rb_const_entry_t *
 rb_const_lookup(VALUE klass, ID id)
 {
     struct rb_id_table *tbl = RCLASS_CONST_TBL(klass);

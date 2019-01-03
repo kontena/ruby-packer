@@ -2,7 +2,7 @@
 #
 #   forwardable.rb -
 #       $Release Version: 1.1$
-#       $Revision: 61155 $
+#       $Revision: 66349 $
 #       by Keiju ISHITSUKA(keiju@ishitsuka.com)
 #       original definition by delegator.rb
 #       Revised by Daniel J. Berger with suggestions from Florian Gross.
@@ -113,7 +113,8 @@ module Forwardable
   require 'forwardable/impl'
 
   # Version of +forwardable.rb+
-  FORWARDABLE_VERSION = "1.2.0"
+  VERSION = "1.2.0"
+  FORWARDABLE_VERSION = VERSION
 
   @debug = nil
   class << self
@@ -221,7 +222,7 @@ module Forwardable
           #{pre}
           begin
             #{accessor}
-          end#{method_call}#{FILTER_EXCEPTION}
+          end#{method_call}
         end
       end
     end;

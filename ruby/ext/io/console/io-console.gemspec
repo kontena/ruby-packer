@@ -1,6 +1,6 @@
 # -*- ruby -*-
-_VERSION = "0.4.6"
-date = %w$Date:: 2017-09-16 08:46:46 +0900#$[1]
+_VERSION = "0.4.7"
+date = %w$Date:: 2018-12-25 15:00:37 +0900#$[1]
 
 Gem::Specification.new do |s|
   s.name = "io-console"
@@ -9,7 +9,7 @@ Gem::Specification.new do |s|
   s.summary = "Console interface"
   s.email = "nobu@ruby-lang.org"
   s.description = "add console capabilities to IO instances."
-  s.required_ruby_version = ">= 2.0.0"
+  s.required_ruby_version = ">= 2.2.0"
   s.homepage = "https://github.com/ruby/io-console"
   s.authors = ["Nobu Nakada"]
   s.require_path = %[lib]

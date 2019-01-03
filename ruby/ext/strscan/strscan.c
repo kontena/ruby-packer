@@ -1,5 +1,5 @@
 /*
-    $Id: strscan.c 61085 2017-12-08 22:42:19Z stomar $
+    $Id: strscan.c 62429 2018-02-16 08:39:48Z nobu $
 
     Copyright (c) 1999-2006 Minero Aoki
 
@@ -1412,6 +1412,7 @@ inspect2(struct strscanner *p)
 void
 Init_strscan(void)
 {
+#undef rb_intern
     ID id_scanerr = rb_intern("ScanError");
     VALUE tmp;
 
@@ -1425,7 +1426,7 @@ Init_strscan(void)
     tmp = rb_str_new2(STRSCAN_VERSION);
     rb_obj_freeze(tmp);
     rb_const_set(StringScanner, rb_intern("Version"), tmp);
-    tmp = rb_str_new2("$Id: strscan.c 61085 2017-12-08 22:42:19Z stomar $");
+    tmp = rb_str_new2("$Id: strscan.c 62429 2018-02-16 08:39:48Z nobu $");
     rb_obj_freeze(tmp);
     rb_const_set(StringScanner, rb_intern("Id"), tmp);
 

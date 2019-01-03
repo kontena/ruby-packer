@@ -1,5 +1,5 @@
-require File.expand_path('../spec_helper', __FILE__)
-require File.expand_path('../fixtures/module', __FILE__)
+require_relative 'spec_helper'
+require_relative 'fixtures/module'
 
 load_extension('module')
 compile_extension("module_under_autoload")
@@ -29,6 +29,20 @@ describe "CApiModule" do
         @m.rb_const_set(CApiModuleSpecs::C, :Z, 8)
       }.should complain(/already initialized constant/)
       CApiModuleSpecs::C::Z.should == 8
+    end
+
+    it "allows arbitrary names, including constant names not valid in Ruby" do
+      -> {
+        CApiModuleSpecs::C.const_set(:_INVALID, 1)
+      }.should raise_error(NameError, /wrong constant name/)
+
+      @m.rb_const_set(CApiModuleSpecs::C, :_INVALID, 2)
+      @m.rb_const_get(CApiModuleSpecs::C, :_INVALID).should == 2
+
+      # Ruby-level should still not allow access
+      -> {
+        CApiModuleSpecs::C.const_get(:_INVALID)
+      }.should raise_error(NameError, /wrong constant name/)
     end
   end
 
@@ -139,6 +153,16 @@ describe "CApiModule" do
 
     it "resolves autoload constants in Object" do
       @m.rb_const_get(Object, :CApiModuleSpecsAutoload).should == 123
+    end
+
+    it "allows arbitrary names, including constant names not valid in Ruby" do
+      -> {
+        CApiModuleSpecs::A.const_get(:_INVALID)
+      }.should raise_error(NameError, /wrong constant name/)
+
+      -> {
+        @m.rb_const_get(CApiModuleSpecs::A, :_INVALID)
+      }.should raise_error(NameError, /uninitialized constant/)
     end
   end
 
@@ -307,12 +331,12 @@ describe "CApiModule" do
         @frozen = @class.dup.freeze
       end
 
-      it "raises a RuntimeError when passed a name" do
-        lambda { @m.rb_undef_method @frozen, "ruby_test_method" }.should raise_error(RuntimeError)
+      it "raises a #{frozen_error_class} when passed a name" do
+        lambda { @m.rb_undef_method @frozen, "ruby_test_method" }.should raise_error(frozen_error_class)
       end
 
-      it "raises a RuntimeError when passed a missing name" do
-        lambda { @m.rb_undef_method @frozen, "not_exist" }.should raise_error(RuntimeError)
+      it "raises a #{frozen_error_class} when passed a missing name" do
+        lambda { @m.rb_undef_method @frozen, "not_exist" }.should raise_error(frozen_error_class)
       end
     end
   end

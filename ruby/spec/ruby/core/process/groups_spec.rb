@@ -1,4 +1,4 @@
-require File.expand_path('../../../spec_helper', __FILE__)
+require_relative '../../spec_helper'
 
 describe "Process.groups" do
   platform_is_not :windows do
@@ -6,8 +6,8 @@ describe "Process.groups" do
       groups = `id -G`.scan(/\d+/).map { |i| i.to_i }
       gid = Process.gid
 
-      expected = (groups.sort - [gid]).sort
-      actual = (Process.groups - [gid]).sort
+      expected = (groups.sort - [gid]).uniq.sort
+      actual = (Process.groups - [gid]).uniq.sort
       actual.should == expected
     end
   end
@@ -53,9 +53,8 @@ describe "Process.groups=" do
 
       platform_is_not :aix do
         it "raises Errno::EPERM" do
-          groups = Process.groups
           lambda {
-            Process.groups = groups
+            Process.groups = [0]
           }.should raise_error(Errno::EPERM)
         end
       end

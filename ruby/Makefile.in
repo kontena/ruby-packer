@@ -16,6 +16,7 @@ top_srcdir = $(srcdir)
 hdrdir = $(srcdir)/include
 PLATFORM_DIR = @PLATFORM_DIR@
 
+CC_WRAPPER = @XCC_WRAPPER@
 CC = @CC@
 CPP = @CPP@
 LD = @LD@
@@ -44,7 +45,17 @@ arch = @arch@
 sitearch = @sitearch@
 sitedir = @sitedir@
 archlibdir = @archlibdir@
+includedir = @includedir@
+archincludedir = @archincludedir@
+rubylibprefix = @rubylibprefix@
+rubylibdir = @rubylibdir@
+rubyarchprefix = @rubyarchprefix@
+rubyarchdir = @rubyarchdir@
+rubyhdrdir = @rubyhdrdir@
+rubyarchhdrdir = @rubyarchhdrdir@
 ruby_version = @ruby_version@
+RUBY_VERSION_NAME = @RUBY_VERSION_NAME@
+UNIVERSAL_ARCHNAMES = @UNIVERSAL_ARCHNAMES@
 
 TESTUI = console
 TESTS =
@@ -52,6 +63,7 @@ INSTALLDOC = @INSTALLDOC@
 DOCTARGETS = @RDOCTARGET@ @CAPITARGET@
 
 EXTOUT = @EXTOUT@
+TIMESTAMPDIR  = $(EXTOUT)/.timestamp
 arch_hdrdir = $(EXTOUT)/include/$(arch)
 VPATH = $(arch_hdrdir)/ruby:$(hdrdir)/ruby:$(srcdir):$(srcdir)/missing
 
@@ -59,6 +71,7 @@ empty =
 CC_VERSION = @CC_VERSION@
 OUTFLAG = @OUTFLAG@$(empty)
 COUTFLAG = @COUTFLAG@$(empty)
+CPPOUTFLAG = $(COUTFLAG)
 ARCH_FLAG = @ARCH_FLAG@
 CFLAGS_NO_ARCH = @CFLAGS@
 CFLAGS = $(CFLAGS_NO_ARCH) $(ARCH_FLAG)
@@ -67,8 +80,26 @@ optflags = @optflags@
 debugflags = @debugflags@
 warnflags = @warnflags@ @strict_warnflags@
 cppflags = @cppflags@
-XCFLAGS = @XCFLAGS@
-CPPFLAGS = @CPPFLAGS@ $(INCFLAGS)
+MATHN = @MATHN@
+XCFLAGS = @XCFLAGS@ $(MATHN:yes=-DCANONICALIZATION_FOR_MATHN)
+USE_RUBYGEMS = @USE_RUBYGEMS@
+USE_RUBYGEMS_ = $(USE_RUBYGEMS:yes=)
+CPPFLAGS = @CPPFLAGS@ $(INCFLAGS) $(USE_RUBYGEMS_:no=-DDISABLE_RUBYGEMS=1)
+MJIT_SUPPORT = @MJIT_SUPPORT@
+MJIT_HEADER_FLAGS = @MJIT_HEADER_FLAGS@
+MJIT_HEADER_SUFFIX =
+MJIT_HEADER_ARCH =
+MJIT_HEADER_INSTALL_DIR = @MJIT_HEADER_INSTALL_DIR@
+MJIT_CC = @MJIT_CC@
+MJIT_CFLAGS = @MJIT_CFLAGS@
+MJIT_OPTFLAGS = @MJIT_OPTFLAGS@
+MJIT_DEBUGFLAGS = @MJIT_DEBUGFLAGS@
+MJIT_LDSHARED = @MJIT_LDSHARED@
+MJIT_DLDFLAGS = @DLDFLAGS@
+MJIT_HEADER   = rb_mjit_header.h
+MJIT_MIN_HEADER_NAME = rb_mjit_min_header-$(RUBY_PROGRAM_VERSION).h
+MJIT_MIN_HEADER = $(MJIT_HEADER_BUILD_DIR)/$(MJIT_MIN_HEADER_NAME)
+MJIT_HEADER_BUILD_DIR = $(EXTOUT)/include/$(arch)
 LDFLAGS = @STATIC@ $(CFLAGS) @LDFLAGS@
 EXTLDFLAGS = @EXTLDFLAGS@
 XLDFLAGS = @XLDFLAGS@ $(EXTLDFLAGS)
@@ -77,6 +108,7 @@ LIBS = @LIBS@ $(EXTLIBS)
 MISSING = @LIBOBJS@ @ALLOCA@
 ENABLE_SHARED = @ENABLE_SHARED@
 LDSHARED = @LIBRUBY_LDSHARED@
+DLDSHARED = @DLDSHARED@
 DLDFLAGS = @LIBRUBY_DLDFLAGS@ $(XLDFLAGS) $(ARCH_FLAG)
 SOLIBS = @SOLIBS@
 ENABLE_DEBUG_ENV = @ENABLE_DEBUG_ENV@
@@ -118,6 +150,9 @@ XRUBY_LIBDIR = @XRUBY_LIBDIR@
 XRUBY_RUBYLIBDIR = @XRUBY_RUBYLIBDIR@
 XRUBY_RUBYHDRDIR = @XRUBY_RUBYHDRDIR@
 BOOTSTRAPRUBY = @BOOTSTRAPRUBY@
+
+COROUTINE_H = @X_FIBER_COROUTINE_H@
+COROUTINE_OBJ = $(COROUTINE_H:.h=.@OBJEXT@)
 
 #### End of system configuration section. ####
 
@@ -173,7 +208,6 @@ RANLIB        = @RANLIB@
 AS            = @AS@
 ASFLAGS       = @ASFLAGS@ $(INCFLAGS)
 IFCHANGE      = $(srcdir)/tool/ifchange
-SET_LC_MESSAGES = env LC_MESSAGES=C
 OBJDUMP       = @OBJDUMP@
 OBJCOPY       = @OBJCOPY@
 HAVE_GIT      = @HAVE_GIT@
@@ -198,6 +232,7 @@ INSTALLED_LIST= .installed.list
 NEWLINE_C     = enc/trans/newline.c
 MINIPRELUDE_C = miniprelude.c
 PRELUDE_C     = prelude.c
+GOLF_PRELUDE_C= golf_prelude.c
 RBCONFIG      = .rbconfig.time
 
 MAINSRC = $(MAINOBJ:@OBJEXT@=c)
@@ -217,7 +252,7 @@ DESTDIR       = @DESTDIR@
 configure_args = @configure_args@
 #### End of variables
 
-.SUFFIXES: .inc .h .c .y .i .$(DTRACE_EXT)
+.SUFFIXES: .inc .h .c .y .i .$(ASMEXT) .$(DTRACE_EXT)
 
 all:
 
@@ -227,45 +262,52 @@ all:
 miniruby$(EXEEXT):
 		@-if test -f $@; then $(MV) -f $@ $@.old; $(RM) $@.old; fi
 		$(ECHO) linking $@
-		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(NORMALMAINOBJ) $(MINIOBJS) $(COMMONOBJS) $(MAINLIBS) $(LIBS) $(RUBYC_FLAGS) $(OUTFLAG)$@ $(LDFLAGS)
+		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(NORMALMAINOBJ) $(MINIOBJS) $(COMMONOBJS) $(MAINLIBS) $(LIBS) $(OUTFLAG)$@
 		$(Q) $(POSTLINK)
 
 $(PROGRAM):
 		@$(RM) $@
 		$(ECHO) linking $@
-		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(EXTOBJS) $(LIBRUBYARG) $(MAINLIBS) $(LIBS) $(EXTLIBS) $(RUBYC_FLAGS) $(OUTFLAG)$@ $(LDFLAGS)
+		$(Q) $(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(EXTOBJS) $(LIBRUBYARG) $(MAINLIBS) $(LIBS) $(EXTLIBS) $(OUTFLAG)$@
 		$(Q) $(POSTLINK)
+
+PRE_LIBRUBY_UPDATE = [ -n "$(LIBRUBY_SO_UPDATE)" ] || $(exec) $(RM) $(LIBRUBY_EXTS)
 
 # We must `rm' the library each time this rule is invoked because "updating" a
 # MAB library on Apple/NeXT (see --enable-fat-binary in configure) is not
 # supported.
 $(LIBRUBY_A):
 		@$(RM) $@
+		@-[ -z "$(EXTSTATIC)" ] || $(PRE_LIBRUBY_UPDATE)
 		$(ECHO) linking static-library $@
 		$(Q) $(AR) $(ARFLAGS) $@ $(LIBRUBY_A_OBJS) $(INITOBJS)
 		@-$(RANLIB) $@ 2> /dev/null || true
 
 verify-static-library: $(LIBRUBY_A)
 		$(ECHO) verifying static-library $@
-		@$(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(LIBRUBY_A) $(MAINLIBS) $(EXTLIBS) $(LIBS) $(RUBYC_FLAGS) $(OUTFLAG)conftest$(EXEEXT) $(LDFLAGS)
+		@$(PURIFY) $(CC) $(LDFLAGS) $(XLDFLAGS) $(MAINOBJ) $(LIBRUBY_A) $(MAINLIBS) $(EXTLIBS) $(LIBS) $(OUTFLAG)conftest$(EXEEXT)
 		@$(RMALL) conftest$(EXEEXT) conftest.c conftest.dSYM
 
 $(LIBRUBY_SO):
-		@-$(PRE_LIBRUBY_UPDATE)
+		@-[ -n "$(EXTSTATIC)" ] || $(PRE_LIBRUBY_UPDATE)
 		$(ECHO) linking shared-library $@
 		$(Q) $(LDSHARED) $(DLDFLAGS) $(OBJS) $(DLDOBJS) $(SOLIBS) $(EXTSOLIBS) $(OUTFLAG)$@
 		-$(Q) $(OBJCOPY) -w -L '$(SYMBOL_PREFIX)Init_*' -L '$(SYMBOL_PREFIX)ruby_static_id_*' \
 			-L '$(SYMBOL_PREFIX)*_threadptr_*' -L '$(SYMBOL_PREFIX)*_ec_*' $@
 		$(Q) $(POSTLINK)
-		@-$(MINIRUBY) -e 'ARGV.each{|link| File.delete link rescue nil; \
-						  File.symlink "$(LIBRUBY_SO)", link}' \
-				$(LIBRUBY_ALIASES) || true
+		@-$(MINIRUBY) -e 'so, *aliases = ARGV; aliases.uniq!; aliases.delete(File.basename(so)); \
+				  aliases.each { |link| File.delete link rescue nil; File.symlink so, link }' \
+				$(LIBRUBY_SO) $(LIBRUBY_ALIASES) || true
+
+LIBRUBY_WITH_EXT = @LIBRUBY_WITH_EXT@
+$(LIBRUBY_$(LIBRUBY_WITH_EXT)): $(LIBRUBY_SO_UPDATE)
 
 ruby_pc = @ruby_pc@
-$(ruby_pc):
+ruby.pc: $(ruby_pc)
+$(ruby_pc): config.status
 		@./config.status --file=$@:$(srcdir)/template/ruby.pc.in
 
-ruby-runner.h: template/ruby-runner.h.in
+ruby-runner.h: template/ruby-runner.h.in config.status
 		@./config.status --file=$@:$(srcdir)/template/$(@F).in
 
 $(RBCONFIG): $(PREP)
@@ -309,12 +351,13 @@ uncommon.mk: $(srcdir)/common.mk
 .PHONY: reconfig
 reconfig-args = $(srcdir)/$(CONFIGURE) $(configure_args)
 config.status-args = ./config.status --recheck
-reconfig-exec-0 = test -t 1 && { CONFIGURE_TTY=yes; export CONFIGURE_TTY; }; exec 3>&1; exit `exec 4>&1; { "$$@" 3>&- 4>&-; echo $$? 1>&4; } | fgrep -v '(cached)' 1>&3 3>&- 4>&-`
+reconfig-exec-0 = test -t 1 && { : $${CONFIGURE_TTY=yes}; export CONFIGURE_TTY; }; exec 3>&1; exit `exec 4>&1; { "$$@" 3>&- 4>&-; echo $$? 1>&4; } | fgrep -v '(cached)' 1>&3 3>&- 4>&-`
 reconfig-exec-1 = set -x; "$$@"
 
 reconfig config.status:	$(srcdir)/$(CONFIGURE) $(srcdir)/enc/Makefile.in \
 			$(srcdir)/include/ruby/version.h
 	@PWD= MINIRUBY="$(MINIRUBY)"; export MINIRUBY; \
+	warnflags="@warnflags@"; export warnflags; \
 	set $(SHELL) $($@-args); $(reconfig-exec-$(V))
 
 $(srcdir)/$(CONFIGURE): $(srcdir)/configure.ac $(srcdir)/aclocal.m4
@@ -372,11 +415,11 @@ $(srcdir)/enc/jis/props.h: enc/jis/props.kwd
 	@$(ECHO) compiling $<
 	$(Q) $(CC) $(CFLAGS) $(XCFLAGS) $(CPPFLAGS) $(COUTFLAG)$@ -c $<
 
-.s.@OBJEXT@:
+.$(ASMEXT).@OBJEXT@:
 	@$(ECHO) assembling $<
-	$(Q) $(AS) $(ASFLAGS) -o $@ $<
+	$(Q) $(CC) $(ASFLAGS) -o $@ -c $<
 
-.c.S:
+.c.$(ASMEXT):
 	@$(ECHO) translating $<
 	$(Q) $(CC) $(CFLAGS) $(XCFLAGS) $(CPPFLAGS) $(COUTFLAG)$@ -S $<
 
@@ -402,10 +445,20 @@ probes.stamp: $(DTRACE_REBUILD_OBJS)
 	fi
 	$(Q) touch $@
 
-probes.@OBJEXT@: $(srcdir)/probes.d $(DTRACE_REBUILD:yes=probes.stamp)
+probes.$(OBJEXT): $(srcdir)/probes.d $(DTRACE_REBUILD:yes=probes.stamp)
 	@$(ECHO) processing probes in object files
 	$(Q) $(RM) $@
 	$(Q) $(DTRACE) -G -C $(INCFLAGS) -s $(srcdir)/probes.d -o $@ $(DTRACE_REBUILD_OBJS)
+
+main: mjit-headers
+yes-mjit-headers: $(MJIT_MIN_HEADER)
+clean-local::
+	$(Q)$(RM) $(MJIT_HEADER) $(MJIT_HEADER:.h=)$(MJIT_HEADER_SUFFIX:%=*).h
+	$(Q)$(RM) $(MJIT_MIN_HEADER) $(MJIT_MIN_HEADER:.h=)$(MJIT_HEADER_SUFFIX:%=*).h
+	$(Q)$(RM) $(MJIT_HEADER_INSTALL_DIR)/rb_mjit_min_header-*.h
+	$(Q)$(RM) $(TIMESTAMPDIR)/$(MJIT_HEADER:.h=)$(MJIT_HEADER_SUFFIX).time mjit_config.h
+	$(Q)$(RM) -r mjit_build_dir.*
+	-$(Q) $(RMDIRS) $(MJIT_HEADER_INSTALL_DIR) 2> $(NULL) || exit 0
 
 # DTrace static library hacks described here:
 # http://mail.opensolaris.org/pipermail/dtrace-discuss/2005-August/000207.html
@@ -417,7 +470,7 @@ clean-local::
 	$(Q)$(RM) ext/extinit.c ext/extinit.$(OBJEXT) ext/ripper/y.output \
 		enc/encinit.c enc/encinit.$(OBJEXT)
 	-$(Q)$(RM) $(pkgconfig_DATA)
-	-$(Q)$(RMALL) exe/ ruby-runner.h *.dSYM
+	-$(Q)$(RMALL) exe/ ruby-runner.$(OBJEXT) ruby-runner.h *.dSYM
 
 distclean-local::
 	$(Q)$(RM) ext/config.cache $(RBCONFIG) Doxyfile
@@ -474,6 +527,8 @@ ext/extinit.$(OBJEXT): ext/extinit.c $(SETUP)
 
 enc/encinit.$(OBJEXT): enc/encinit.c $(SETUP)
 
+cont.$(OBJEXT): $(COROUTINE_H)
+
 test-bundled-gems-run:
 	$(Q) set -e; while read gem _; do \
 	  echo testing $$gem gem && \
@@ -493,6 +548,11 @@ gcov:
 lcov:
 	$(Q) $(BASERUBY) $(srcdir)/tool/run-lcov.rb
 
+update-benchmark-driver:
+	$(Q) $(srcdir)/tool/git-refresh -C $(srcdir)/benchmark $(Q1:0=-q) \
+		--branch $(BENCHMARK_DRIVER_GIT_REF) \
+		$(BENCHMARK_DRIVER_GIT_URL) benchmark-driver $(GIT_OPTS)
+
 update-doclie:
 	$(Q) $(srcdir)/tool/git-refresh -C $(srcdir)/coverage $(Q1:0=-q) \
 		--branch $(DOCLIE_GIT_REF) \
@@ -510,12 +570,16 @@ update-simplecov:
 
 update-coverage: update-simplecov update-simplecov-html update-doclie
 
+update-known-errors:
+	errno --list | cut -d' ' -f1 | sort -u - $(srcdir)/defs/known_errors.def | \
+	$(IFCHANGE) $(srcdir)/defs/known_errors.def -
+
 INSNS	= opt_sc.inc optinsn.inc optunifs.inc insns.inc insns_info.inc \
-	  vmtc.inc vm.inc
+	  vmtc.inc vm.inc mjit_compile.inc
 
 $(INSNS): $(srcdir)/insns.def vm_opts.h \
 	  $(srcdir)/defs/opt_operand.def $(srcdir)/defs/opt_insn_unif.def \
-	  $(srcdir)/tool/instruction.rb $(srcdir)/tool/insns2vm.rb
+	  $(srcdir)/tool/insns2vm.rb
 	$(ECHO) generating $@
 	$(Q) $(BASERUBY) -Ku $(srcdir)/tool/insns2vm.rb $(INSNS2VMOPT) $@
 
@@ -529,3 +593,41 @@ loadpath: verconf.h
 un-runnable:
 	$(ECHO) cannot make runnable, configure with --enable-load-relative.
 	$(Q) exit 1
+
+mjit_config.h:
+	$(ECHO) making $@
+	@{ \
+	. $(srcdir)/tool/mjit_archflag.sh; \
+	parse_arch_flags "$(UNIVERSAL_ARCHNAMES)" $(ARCH_FLAG); \
+	test "$(Q)" = @ || set -x; \
+	echo '#ifndef RUBY_MJIT_CONFIG_H'; \
+	echo '#define RUBY_MJIT_CONFIG_H 1'; \
+	echo; \
+	sep=; \
+	echo '#ifdef LOAD_RELATIVE'; \
+	quote MJIT_HEADER_INSTALL_DIR "/$(MJIT_HEADER_INSTALL_DIR)"; \
+	echo '#else'; \
+	quote MJIT_HEADER_INSTALL_DIR "$(rubyarchhdrdir)"; \
+	echo '#endif'; \
+	quote MJIT_MIN_HEADER_NAME "$(MJIT_MIN_HEADER_NAME)"; \
+	sep=,; \
+	quote "MJIT_CC_COMMON  " $(MJIT_CC); \
+	quote "MJIT_CFLAGS      MJIT_ARCHFLAG" $(MJIT_CFLAGS); \
+	quote "MJIT_OPTFLAGS   " $(MJIT_OPTFLAGS); \
+	quote "MJIT_DEBUGFLAGS " $(MJIT_DEBUGFLAGS); \
+	quote "MJIT_LDSHARED   " $(MJIT_LDSHARED); \
+	quote "MJIT_DLDFLAGS    MJIT_ARCHFLAG" $(MJIT_DLDFLAGS); \
+	quote "MJIT_LIBS       " $(LIBRUBYARG_SHARED); \
+	quote 'PRELOADENV       "@PRELOADENV@"'; \
+	indent=$${archs:+'  '}; \
+	define_arch_flags; \
+	echo; \
+	echo '#endif /* RUBY_MJIT_CONFIG_H */'; \
+	} > $@
+
+yes-test-almost yes-test-all: mjit_build_dir.$(SOEXT)
+mjit_build_dir.$(SOEXT): $(MJIT_MIN_HEADER) $(srcdir)/ruby-runner.c ruby-runner.h
+	$(ECHO) making $@
+	$(Q) $(DLDSHARED) $(MJIT_DLDFLAGS) $(ARCH_FLAG) $(CFLAGS) $(CPPFLAGS) \
+		-DMAKE_MJIT_BUILD_DIR=1 -DMJIT_MIN_HEADER='"$(MJIT_MIN_HEADER)"' \
+		$(OUTFLAG)$@ $(srcdir)/ruby-runner.c

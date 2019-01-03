@@ -1,6 +1,6 @@
 # -*- encoding: utf-8 -*-
-require File.expand_path('../spec_helper', __FILE__)
-require File.expand_path('../fixtures/encoding', __FILE__)
+require_relative 'spec_helper'
+require_relative 'fixtures/encoding'
 
 load_extension('encoding')
 
@@ -11,24 +11,6 @@ describe :rb_enc_get_index, shared: true do
 
   it "returns the index of the encoding of a Regexp" do
     @s.send(@method, /regexp/).should >= 0
-  end
-
-  it "returns the index of the encoding of an Object" do
-    obj = mock("rb_enc_get_index string")
-    @s.rb_enc_set_index(obj, 1)
-    @s.send(@method, obj).should == 1
-  end
-
-  it "returns the index of the dummy encoding of an Object" do
-    obj = mock("rb_enc_get_index string")
-    index = Encoding.list.index(Encoding::UTF_16)
-    @s.rb_enc_set_index(obj, index)
-    @s.send(@method, obj).should == index
-  end
-
-  it "returns 0 for an object without an encoding" do
-    obj = mock("rb_enc_get_index string")
-    @s.send(@method, obj).should == 0
   end
 end
 
@@ -49,10 +31,13 @@ describe :rb_enc_set_index, shared: true do
     result.first.should == result.last
   end
 
-  it "associates an encoding with an object" do
-    obj = mock("rb_enc_set_index string")
-    result = @s.send(@method, obj, 1)
-    result.first.should == result.last
+  ruby_version_is "2.6" do
+    it "raises an ArgumentError for a non-encoding capable object" do
+      obj = Object.new
+      -> {
+        result = @s.send(@method, obj, 1)
+      }.should raise_error(ArgumentError, "cannot set encoding on non-encoding capable object")
+    end
   end
 end
 
@@ -61,10 +46,12 @@ describe "C-API Encoding function" do
     @s = CApiEncodingSpecs.new
   end
 
-  describe "rb_encdb_alias" do
-    it "creates an alias for an existing Encoding" do
-      @s.rb_encdb_alias("ZOMGWTFBBQ", "UTF-8").should >= 0
-      Encoding.find("ZOMGWTFBBQ").name.should == "UTF-8"
+  ruby_version_is "2.6" do
+    describe "rb_enc_alias" do
+      it "creates an alias for an existing Encoding" do
+        @s.rb_enc_alias("ZOMGWTFBBQ", "UTF-8").should >= 0
+        Encoding.find("ZOMGWTFBBQ").name.should == "UTF-8"
+      end
     end
   end
 
@@ -152,15 +139,22 @@ describe "C-API Encoding function" do
     it_behaves_like :rb_enc_get_index, :rb_enc_get_index
 
     it "returns the index of the encoding of a Symbol" do
-      @s.send(@method, :symbol).should >= 0
+      @s.rb_enc_get_index(:symbol).should >= 0
     end
 
     it "returns -1 as the index of nil" do
-      @s.send(@method, nil).should == -1
+      @s.rb_enc_get_index(nil).should == -1
     end
 
     it "returns -1 as the index for immediates" do
-      @s.send(@method, 1).should == -1
+      @s.rb_enc_get_index(1).should == -1
+    end
+
+    ruby_version_is "2.6" do
+      it "returns -1 for an object without an encoding" do
+        obj = Object.new
+        @s.rb_enc_get_index(obj).should == -1
+      end
     end
   end
 

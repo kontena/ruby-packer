@@ -1,5 +1,6 @@
-[![Build Status](https://travis-ci.org/ruby/ruby.svg)](https://travis-ci.org/ruby/ruby)
+[![Build Status](https://travis-ci.org/ruby/ruby.svg?branch=trunk)](https://travis-ci.org/ruby/ruby)
 [![Build status](https://ci.appveyor.com/api/projects/status/0sy8rrxut4o0k960/branch/trunk?svg=true)](https://ci.appveyor.com/project/ruby/ruby/branch/trunk)
+[![wercker status](https://app.wercker.com/status/e5e7e1704f62b76525022aa424aef6ef/s/trunk "wercker status")](https://app.wercker.com/project/byKey/e5e7e1704f62b76525022aa424aef6ef)
 
 # What's Ruby
 
@@ -20,7 +21,7 @@ extensible.
 *   Dynamic Loading of Object Files (on some architectures)
 *   Highly Portable (works on many Unix-like/POSIX compatible platforms as
     well as Windows, macOS, Haiku, etc.) cf.
-    https://bugs.ruby-lang.org/projects/ruby-trunk/wiki/SupportedPlatforms
+    https://github.com/ruby/ruby/blob/trunk/doc/contributing.rdoc#platform-maintainers
 
 
 ## How to get Ruby
@@ -29,10 +30,6 @@ For a complete list of ways to install Ruby, including using third-party tools
 like rvm, see:
 
 https://www.ruby-lang.org/en/downloads/
-
-The Ruby distribution files can be found on the following FTP site:
-
-ftp://ftp.ruby-lang.org/pub/ruby/
 
 The trunk of the Ruby source tree can be checked out with the following
 command:
@@ -50,7 +47,7 @@ to see the list of branches:
 
 Or if you are using git then use the following command:
 
-    $ git ls-remote git://github.com/ruby/ruby.git
+    $ git ls-remote https://github.com/ruby/ruby.git
 
 ## Ruby home page
 
@@ -66,7 +63,7 @@ send the following phrase:
     subscribe
 
 in the mail body (not subject) to the address
-<mailto:ruby-talk-request@ruby-lang.org>.
+<ruby-talk-request@ruby-lang.org>.
 
 ## How to compile and install
 
@@ -172,4 +169,4 @@ See the file [CONTRIBUTING.md](CONTRIBUTING.md)
 Ruby was originally designed and developed by Yukihiro Matsumoto (Matz) in
 1995.
 
-<mailto:matz@ruby-lang.org>
+<matz@ruby-lang.org>

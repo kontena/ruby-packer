@@ -1,5 +1,5 @@
-require File.expand_path('../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/super', __FILE__)
+require_relative '../spec_helper'
+require_relative 'fixtures/super'
 
 describe "The super keyword" do
   it "calls the method on the calling class" do
@@ -189,6 +189,16 @@ describe "The super keyword" do
 
   it "passes along modified rest args when they were originally empty" do
     Super::RestArgsWithSuper::B.new.a.should == ["foo"]
+  end
+
+  # https://bugs.ruby-lang.org/issues/14279
+  it "passes along reassigned rest args" do
+    Super::ZSuperWithRestReassigned::B.new.a("bar").should == ["foo"]
+  end
+
+  # https://bugs.ruby-lang.org/issues/14279
+  it "wraps into array and passes along reassigned rest args with non-array scalar value" do
+    Super::ZSuperWithRestReassignedWithScalar::B.new.a("bar").should == ["foo"]
   end
 
   it "invokes methods from a chain of anonymous modules" do

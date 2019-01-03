@@ -2,7 +2,7 @@
 
   dbm.c -
 
-  $Author: rhe $
+  $Author: hsbt $
   created at: Mon Jan 24 15:59:52 JST 1994
 
   Copyright (C) 1995-2001 Yukihiro Matsumoto
@@ -38,6 +38,8 @@ struct dbmdata {
     long di_size;
     DBM *di_dbm;
 };
+
+NORETURN(static void closed_dbm(void));
 
 static void
 closed_dbm(void)
@@ -992,7 +994,7 @@ fdbm_reject(VALUE obj)
  *   It is based on dbm library in Unix Version 7 but has different API to
  *   support multiple databases in a process.
  * - {Berkeley DB}[http://en.wikipedia.org/wiki/Berkeley_DB] versions
- *   1 thru 5, also known as BDB and Sleepycat DB, now owned by Oracle
+ *   1 thru 6, also known as BDB and Sleepycat DB, now owned by Oracle
  *   Corporation.
  * - Berkeley DB 1.x, still found in 4.4BSD derivatives (FreeBSD, OpenBSD, etc).
  * - {gdbm}[http://www.gnu.org/software/gdbm/], the GNU implementation of dbm.

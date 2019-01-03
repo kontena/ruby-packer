@@ -1,4 +1,4 @@
-require File.expand_path('../spec_helper', __FILE__)
+require_relative 'spec_helper'
 
 load_extension("kernel")
 
@@ -52,6 +52,13 @@ describe "C-API Kernel function" do
       @s.rb_block_call_no_func(ary) do |i|
         i + 1
       end.should == [2, 4, 6]
+    end
+  end
+
+  describe "rb_frame_this_func" do
+    it "returns the name of the method called" do
+      @s.rb_frame_this_func_test.should == :rb_frame_this_func_test
+      @s.rb_frame_this_func_test_again.should == :rb_frame_this_func_test_again
     end
   end
 

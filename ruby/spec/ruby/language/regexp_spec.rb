@@ -1,5 +1,5 @@
-require File.expand_path('../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes', __FILE__)
+require_relative '../spec_helper'
+require_relative 'fixtures/classes'
 
 describe "Literal Regexps" do
   it "matches against $_ (last input) in a conditional if no explicit matchee provided" do
@@ -146,5 +146,52 @@ describe "Literal Regexps" do
     pattern.should =~ 'F'
     pattern.should_not =~ 'fooF'
     pattern.should_not =~ 'T'
+  end
+
+  escapable_terminators =  ['!', '"', '#', '%', '&', "'", ',', '-', ':', ';', '@', '_', '`']
+
+  it "supports escaping characters when used as a terminator" do
+    escapable_terminators.each do |c|
+      ref = "(?-mix:#{c})"
+      pattern = eval("%r" + c + "\\" + c + c)
+      pattern.to_s.should == ref
+    end
+  end
+
+  it "treats an escaped non-escapable character normally when used as a terminator" do
+    all_terminators = [*("!".."/"), *(":".."@"), *("[".."`"), *("{".."~")]
+    special_cases = ['(', '{', '[', '<', '\\', '=', '~']
+    (all_terminators - special_cases - escapable_terminators).each do |c|
+      ref = "(?-mix:\\#{c})"
+      pattern = eval("%r" + c + "\\" + c + c)
+      pattern.to_s.should == ref
+    end
+  end
+
+  ruby_version_is '2.4' do
+    it "support handling unicode 9.0 characters with POSIX bracket expressions" do
+      char_lowercase = "\u{104D8}" # OSAGE SMALL LETTER A
+      /[[:lower:]]/.match(char_lowercase).to_s.should == char_lowercase
+      char_uppercase = "\u{104B0}" # OSAGE CAPITAL LETTER A
+      /[[:upper:]]/.match(char_uppercase).to_s.should == char_uppercase
+    end
+  end
+
+  ruby_version_is ""..."2.4" do
+    it "does not support handling unicode 9.0 characters with POSIX bracket expressions" do
+      char_lowercase = "\u{104D8}" # OSAGE SMALL LETTER A
+      /[[:lower:]]/.match(char_lowercase).should == nil
+
+      char_uppercase = "\u{104B0}" # OSAGE CAPITAL LETTER A
+      /[[:upper:]]/.match(char_lowercase).should == nil
+    end
+
+    it "supports handling unicode 8.0 characters with POSIX bracket expressions" do
+      char_lowercase = "\u{A7B5}" # LATIN SMALL LETTER BETA
+      /[[:lower:]]/.match(char_lowercase).to_s.should == char_lowercase
+
+      char_uppercase = "\u{A7B4}" # LATIN CAPITAL LETTER BETA
+      /[[:upper:]]/.match(char_uppercase).to_s.should == char_uppercase
+    end
   end
 end

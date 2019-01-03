@@ -1,6 +1,6 @@
 # -*- encoding: utf-8 -*-
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes.rb', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/classes'
 
 describe "String#casecmp independent of case" do
   it "returns -1 when less than other" do
@@ -35,6 +35,10 @@ describe "String#casecmp independent of case" do
     it "returns nil if other can't be converted to a string" do
       "abc".casecmp(mock('abc')).should be_nil
     end
+  end
+
+  it "returns nil if incompatible encodings" do
+    "あれ".casecmp("れ".encode(Encoding::EUC_JP)).should be_nil
   end
 
   describe "in UTF-8 mode" do
@@ -96,6 +100,12 @@ describe "String#casecmp independent of case" do
     it "returns 1 when numerically greater than other" do
       @lower_a_tilde.casecmp(@upper_a_tilde).should == 1
     end
+
+    ruby_version_is "2.4" do
+      it "does not case fold" do
+        "ß".casecmp("ss").should == 1
+      end
+    end
   end
 
   describe "when comparing a subclass instance" do
@@ -138,6 +148,10 @@ ruby_version_is "2.4" do
       "abc".casecmp?(other).should == true
     end
 
+    it "returns nil if incompatible encodings" do
+      "あれ".casecmp?("れ".encode(Encoding::EUC_JP)).should be_nil
+    end
+
     describe 'for UNICODE characters' do
       it 'returns true when downcase(:fold) on unicode' do
         'äöü'.casecmp?('ÄÖÜ').should == true
@@ -178,6 +192,24 @@ ruby_version_is "2.4" do
         it "returns true when they have the same bytes" do
           @upper_a_tilde.casecmp?(@upper_a_tilde).should == true
         end
+      end
+    end
+
+    ruby_version_is "2.4" do
+      it "case folds" do
+        "ß".casecmp?("ss").should be_true
+      end
+    end
+
+    ruby_version_is "2.4" ... "2.5" do
+      it "raises a TypeError if other can't be converted to a string" do
+        lambda { "abc".casecmp?(mock('abc')) }.should raise_error(TypeError)
+      end
+    end
+
+    ruby_version_is "2.5" do
+      it "returns nil if other can't be converted to a string" do
+        "abc".casecmp?(mock('abc')).should be_nil
       end
     end
   end

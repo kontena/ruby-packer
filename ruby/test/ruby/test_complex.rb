@@ -323,6 +323,13 @@ class Complex_Test < Test::Unit::TestCase
 
     assert_equal(Complex(Rational(1,2),Rational(1)), c / Rational(2))
     assert_equal(Complex(Rational(3,2),Rational(3)), c / Rational(2,3))
+
+    c = Complex(1)
+    r = c / c
+    assert_instance_of(Complex, r)
+    assert_equal(1, r)
+    assert_predicate(r.real, :integer?)
+    assert_predicate(r.imag, :integer?)
   end
 
   def test_quo
@@ -400,6 +407,10 @@ class Complex_Test < Test::Unit::TestCase
     r = c ** Rational(-2,3)
     assert_in_delta(0.432, r.real, 0.001)
     assert_in_delta(-0.393, r.imag, 0.001)
+
+    c = Complex(0.0, -888888888888888.0)**8888
+    assert_not_predicate(c.real, :nan?)
+    assert_not_predicate(c.imag, :nan?)
   end
 
   def test_cmp
@@ -746,6 +757,27 @@ class Complex_Test < Test::Unit::TestCase
 
   end
 
+  def test_Complex_without_exception
+    assert_nothing_raised(ArgumentError){
+      assert_equal(nil, Complex('5x', exception: false))
+    }
+    assert_nothing_raised(ArgumentError){
+      assert_equal(nil, Complex(Object.new, exception: false))
+    }
+    assert_nothing_raised(ArgumentError){
+      assert_equal(nil, Complex(1, Object.new, exception: false))
+    }
+
+    o = Object.new
+    def o.to_c; raise; end
+    assert_nothing_raised(ArgumentError){
+      assert_equal(nil, Complex(o, exception: false))
+    }
+    assert_nothing_raised(ArgumentError){
+      assert_equal(nil, Complex(1, o, exception: false))
+    }
+  end
+
   def test_respond
     c = Complex(1,1)
     assert_not_respond_to(c, :%)
@@ -958,4 +990,30 @@ class Complex_Test < Test::Unit::TestCase
   def test_known_bug
   end
 
+  def test_canonicalize_internal
+    obj = Class.new(Numeric) do
+      attr_accessor :real
+      alias real? real
+    end.new
+    obj.real = true
+    c = Complex.rect(obj, 1);
+    obj.real = false
+    c = c.conj
+    assert_equal(obj, c.real)
+    assert_equal(-1, c.imag)
+  end
+
+  def test_canonicalize_polar
+    obj = Class.new(Numeric) do
+      def initialize
+        @x = 2
+      end
+      def real?
+        (@x -= 1) > 0
+      end
+    end.new
+    assert_raise(TypeError) do
+      Complex.polar(1, obj)
+    end
+  end
 end
