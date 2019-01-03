@@ -3,6 +3,7 @@ cache: bundler
 sudo: enabled
 before_install:
   - "./.travis/install_deps.sh"
+  - gem update --system
   - gem install bundler
 stages:
 - name: test
