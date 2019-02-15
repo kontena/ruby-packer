@@ -50,7 +50,20 @@ __build_script() {
   # export ENCLOSE_IO_USE_ORIGINAL_RUBY=1
 
   # FIXME: removing the cache /tmp/rubyc/
-  rm -fv rubyc; ruby bin/rubyc -o rubyc --openssl-dir=/etc/ssl/
+  rm -fv rubyc
+  # from .travis/test.sh
+  ruby -Ilib bin/rubyc bin/rubyc \
+    --openssl-dir=/etc/ssl/ \
+    --ignore-file=.git \
+    --ignore-file=.gitignore \
+    --ignore-file=.gitmodules \
+    --ignore-file=CHANGELOG.md \
+    --ignore-file=ruby.patch \
+    --ignore-file=.travis.yml \
+    --ignore-file=.travis/test.sh \
+    --ignore-file=.travis/install_deps.sh \
+    --ignore-file=docker_build.sh \
+    -o rubyc
 }
 
 # Enter an interactive shell by default.
