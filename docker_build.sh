@@ -109,11 +109,11 @@ help() {
   cat <<'EOF'
 Usage:
 
-  Without caching image:
+  Without image caching:
 
     DOCKER_IMAGE="ubuntu:16.04" ./docker_build.sh build_rubyc
 
-  With caching image:
+  With image caching:
 
     DOCKER_IMAGE="ubuntu:16.04"     ./docker_build.sh build_docker_image
     DOCKER_IMAGE="rubyc_build_base" ./docker_build.sh build_rubyc
