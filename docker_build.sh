@@ -32,8 +32,6 @@ __setup() {
 }
 
 __build_base() {
-  __setup
-
   __apt_get_install() {
     apt-get update
     echo Y | apt-get install \
@@ -55,6 +53,7 @@ __build_base() {
   [[ -d ~/.rbenv/plugins/ruby-build ]] \
   || git clone https://github.com/rbenv/ruby-build.git ~/.rbenv/plugins/ruby-build
 
+  __setup
   rbenv install 2.6.0
   rbenv global 2.6.0
   ruby -v | grep 2.6.0
