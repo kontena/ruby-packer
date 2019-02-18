@@ -5,13 +5,34 @@
 # License : MIT
 # Date    : 2019-Feb-16
 
-__build_script() {
+build_docker_image() {
+  {
+    : "${DOCKER_IMAGE:=ubuntu:16.04}"
+    echo "FROM ${DOCKER_IMAGE}"
+    echo "ENV DOCKER_IMAGE ${DOCKER_IMAGE}"
+    echo "ADD ./docker_build.sh /root/"
+    echo "RUN bash /root/docker_build.sh __build_base"
+  } > Dockerfile.rubyc_build_base
+
+  docker build -f Dockerfile.rubyc_build_base -t "rubyc_build_base" .
+}
+
+__setup() {
   set -uex
 
   echo "## Your build environment"
   env
   echo "## DNS resolvers"
   cat /etc/resolv.conf
+
+  export PATH="$HOME/.rbenv/plugins/ruby-build/bin:$HOME/.rbenv/bin:$PATH"
+  if command -v rbenv >/dev/null; then
+    eval "$(rbenv init -)"
+  fi
+}
+
+__build_base() {
+  __setup
 
   __apt_get_install() {
     apt-get update
@@ -27,8 +48,6 @@ __build_script() {
       pkg-config
   }
 
-  export PATH="$HOME/.rbenv/plugins/ruby-build/bin:$HOME/.rbenv/bin:$PATH"
-
   __apt_get_install
 
   [[ -d ~/.rbenv ]] \
@@ -36,13 +55,20 @@ __build_script() {
   [[ -d ~/.rbenv/plugins/ruby-build ]] \
   || git clone https://github.com/rbenv/ruby-build.git ~/.rbenv/plugins/ruby-build
 
-  eval "$(rbenv init -)"
-
   rbenv install 2.6.0
   rbenv global 2.6.0
   ruby -v | grep 2.6.0
 
   gem install bundler
+}
+
+_build_rubyc() {
+  __setup
+
+  if ! command -v rbenv >/dev/null; then
+    __build_base
+  fi
+
   rm -fv Gemfile.lock
   bundler install
   # bundle exec rake rubyc
@@ -66,18 +92,32 @@ __build_script() {
     -o rubyc
 }
 
-# Enter an interactive shell by default.
-# Manually start ./docker.sh __build_script for debugging the script.
+# Enter an interactive shell by default, and allow to debug this script.
 docker_start() {
   docker run \
     --name rubyc-build --rm -ti \
     -v "$(pwd -P)":/src/ -w /src/ \
-    ubuntu:18.04 bash "$@"
+    "${DOCKER_IMAGE:-ubuntu:16.04}" bash "$@"
 }
 
-build() {
+build_rubyc() {
   set -xeu
-  docker_start "$(basename "${BASH_SOURCE[0]:-$0}")" __build_script
+  docker_start "$(basename "${BASH_SOURCE[0]:-$0}")" _build_rubyc
 }
 
-"${@:-build}"
+help() {
+  cat <<'EOF'
+Usage:
+
+  Without caching image:
+
+    DOCKER_IMAGE="ubuntu:16.04" ./docker_build.sh build_rubyc
+
+  With caching image:
+
+    DOCKER_IMAGE="ubuntu:16.04"     ./docker_build.sh build_docker_image
+    DOCKER_IMAGE="rubyc_build_base" ./docker_build.sh build_rubyc
+EOF
+}
+
+"${@:-help}"
