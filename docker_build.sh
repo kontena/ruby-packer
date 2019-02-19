@@ -119,8 +119,8 @@ help() {
   cat <<'EOF'
 Usage:
 
-  export DOCKER_IMAGE="ubuntu:16.04"
-  export RUBY_VERSION="2.6.0"
+    export DOCKER_IMAGE="ubuntu:16.04"
+    export RUBY_VERSION="2.6.0"
 
   Without image caching (slow if any error would occur):
 
@@ -144,9 +144,9 @@ Usage:
 
 Important notes:
 
-  The build process will delete the local `Gemfile.lock`. This is
-  avoid some issue with bundler. Fixing a bundler version can avoid
-  this removing step.
+    The build process will delete the local `Gemfile.lock`. This is
+    avoid some issue with bundler. Fixing a bundler version can avoid
+    this removing step.
 
 EOF
 }
