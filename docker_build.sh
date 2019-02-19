@@ -107,6 +107,7 @@ docker_start() {
   docker run \
     --name rubyc-build --rm -ti \
     -v "$(pwd -P)":/src/ -w /src/ \
+    -e "RUBY_VERSION=$RUBY_VERSION" \
     "${DOCKER_IMAGE:-ubuntu:16.04}" bash "$@"
 }
 
