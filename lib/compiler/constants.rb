@@ -7,5 +7,5 @@ class Compiler
   VERSION = '0.6.0'
   PRJ_ROOT = File.expand_path('../../..', __FILE__)
   VENDOR_DIR = File.expand_path('vendor', PRJ_ROOT)
-  MEMFS = '/__enclose_io_memfs__'
+  MEMFS = '/__ruby_packer_memfs__'
 end

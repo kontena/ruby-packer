@@ -364,7 +364,7 @@ class Compiler
         unless File.exist?(@ruby_build)
           @compile_env['RUBY_PACKER_RUBYC_1ST_PASS'] = '1'
           @compile_env['RUBY_PACKER_RUBYC_2ND_PASS'] = nil
-          # enclose_io_memfs.o - 1st pass
+          # ruby_packer_memfs.o - 1st pass
           @utils.run(@compile_env, "call win32\\configure.bat \
                                   --disable-install-doc \
                                   --prefix=#{@utils.escape @ruby_build}")
@@ -407,7 +407,7 @@ class Compiler
             raise "Failed to patch CFLAGS and LDFLAGS of #{target}" unless 1 == found
           end
         end
-        # enclose_io_memfs.o - 2nd pass
+        # ruby_packer_memfs.o - 2nd pass
         prepare_work_dir
         prepare_local if @entrance
         @utils.rm_f('verconf.h')
@@ -419,8 +419,8 @@ class Compiler
         @utils.rm_f('main.obj')
         @utils.rm_f('win32/file.obj')
         @utils.rm_f('win32/win32.obj')
-        @utils.rm_f('include/enclose_io.h')
-        @utils.rm_f('enclose_io_memfs.c')
+        @utils.rm_f('include/ruby_packer.h')
+        @utils.rm_f('ruby_packer_memfs.c')
         @compile_env['RUBY_PACKER_RUBYC_1ST_PASS'] = nil
         @compile_env['RUBY_PACKER_RUBYC_2ND_PASS'] = '1'
         @utils.run(@compile_env, "call win32\\configure.bat \
@@ -429,8 +429,8 @@ class Compiler
                                 --enable-debug-env \
                                 --disable-install-doc \
                                 --with-static-linked-ext")
-        make_enclose_io_memfs
-        make_enclose_io_vars
+        make_ruby_packer_memfs
+        make_ruby_packer_vars
         @utils.run_allow_failures(@compile_env, "nmake #{@options[:nmake_args]}")
         @utils.run(@compile_env, %Q{nmake #{@options[:nmake_args]} -f enc.mk V="0" UNICODE_HDR_DIR="./enc/unicode/9.0.0"  RUBY=".\\miniruby.exe -I./lib -I. " MINIRUBY=".\\miniruby.exe -I./lib -I. " -l libenc})
         @utils.run(@compile_env, %Q{nmake #{@options[:nmake_args]} -f enc.mk V="0" UNICODE_HDR_DIR="./enc/unicode/9.0.0"  RUBY=".\\miniruby.exe -I./lib -I. " MINIRUBY=".\\miniruby.exe -I./lib -I. " -l libtrans})
@@ -441,7 +441,7 @@ class Compiler
         unless File.exist?(@ruby_build)
           @compile_env['RUBY_PACKER_RUBYC_1ST_PASS'] = '1'
           @compile_env['RUBY_PACKER_RUBYC_2ND_PASS'] = nil
-          # enclose_io_memfs.o - 1st pass
+          # ruby_packer_memfs.o - 1st pass
           @utils.run(@compile_env, "./configure \
                                   --prefix=#{@utils.escape @ruby_build} \
                                   --enable-bundled-libyaml \
@@ -455,7 +455,7 @@ class Compiler
             f.puts 'option nodynamic'
           end
         end
-        # enclose_io_memfs.o - 2nd pass
+        # ruby_packer_memfs.o - 2nd pass
         prepare_work_dir
         prepare_local if @entrance
         @utils.rm_f('verconf.h')
@@ -466,8 +466,8 @@ class Compiler
         @utils.rm_f('io.o')
         @utils.rm_f('main.o')
         @utils.rm_f('ruby')
-        @utils.rm_f('include/enclose_io.h')
-        @utils.rm_f('enclose_io_memfs.c')
+        @utils.rm_f('include/ruby_packer.h')
+        @utils.rm_f('ruby_packer_memfs.c')
         @compile_env['RUBY_PACKER_RUBYC_1ST_PASS'] = nil
         @compile_env['RUBY_PACKER_RUBYC_2ND_PASS'] = '1'
         @utils.run(@compile_env, "./configure \
@@ -478,8 +478,8 @@ class Compiler
                                 --enable-debug-env \
                                 --disable-install-rdoc \
                                 --with-static-linked-ext")
-        make_enclose_io_memfs
-        make_enclose_io_vars
+        make_ruby_packer_memfs
+        make_ruby_packer_vars
         @utils.run(@compile_env, "make #{@options[:make_args]}")
         @utils.cp('ruby', @options[:output])
       end
@@ -487,14 +487,14 @@ class Compiler
   end
 
   def prepare_work_dir
-    # Prepare /__enclose_io_memfs__
+    # Prepare /__ruby_packer_memfs__
     @work_dir = File.join(@options[:tmpdir], 'rubyc_work_dir')
     unless @options[:keep_tmpdir]
       @utils.rm_rf(@work_dir)
       @utils.mkdir_p(@work_dir)
     end
     
-    @work_dir_inner = File.join(@work_dir, '__enclose_io_memfs__')
+    @work_dir_inner = File.join(@work_dir, '__ruby_packer_memfs__')
     
     unless @options[:keep_tmpdir]
       @utils.cp_r(@ruby_build, @work_dir_inner, preserve: true)
@@ -519,7 +519,7 @@ class Compiler
   end
 
   def prepare_local
-    # Prepare /__enclose_io_memfs__/local
+    # Prepare /__ruby_packer_memfs__/local
     @utils.chdir(@root) do
       gemspecs = Dir['./*.gemspec']
       gemfiles = Dir['./Gemfile']
@@ -566,7 +566,7 @@ class Compiler
         @utils.run(@local_toolchain, "gem", "install", the_bundler_gem, '--verbose', '--no-document', '--install-dir', @gems_dir)
         # bundle install
         @work_dir_local = File.join(@work_dir_inner, 'local')
-        @env_bundle_gemfile = '/__enclose_io_memfs__/local/Gemfile'
+        @env_bundle_gemfile = '/__ruby_packer_memfs__/local/Gemfile'
         unless @options[:keep_tmpdir]
           @utils.cp_r(@root, @work_dir_local)
         end
@@ -574,7 +574,7 @@ class Compiler
           @utils.run(@local_toolchain, 'bundle', 'install', '--deployment')
           if 0 == @utils.run_allow_failures(@local_toolchain, 'bundle', 'show', 'rails')
             STDERR.puts "-> Detected a Rails project" unless @options[:quiet]
-            @enclose_io_rails = true
+            @ruby_packer_rails = true
             @utils.rm_rf('tmp')
             @utils.rm_rf('log')
             @utils.mkdir('tmp')
@@ -665,20 +665,20 @@ class Compiler
     end
   end
 
-  def make_enclose_io_memfs
+  def make_ruby_packer_memfs
     @utils.chdir(@vendor_ruby) do
-      @utils.rm_f('enclose_io_memfs.squashfs')
-      @utils.rm_f('enclose_io_memfs.c')
+      @utils.rm_f('ruby_packer_memfs.squashfs')
+      @utils.rm_f('ruby_packer_memfs.c')
       @utils.run("mksquashfs -version")
-      @utils.run("mksquashfs #{@utils.escape @work_dir} enclose_io_memfs.squashfs")
-      bytes = IO.binread('enclose_io_memfs.squashfs').bytes
+      @utils.run("mksquashfs #{@utils.escape @work_dir} ruby_packer_memfs.squashfs")
+      bytes = IO.binread('ruby_packer_memfs.squashfs').bytes
       # TODO slow operation
-      # remember to change libsquash's sample/enclose_io_memfs.c as well
-      File.open("enclose_io_memfs.c", "w") do |f|
+      # remember to change libsquash's sample/ruby_packer_memfs.c as well
+      File.open("ruby_packer_memfs.c", "w") do |f|
         f.puts '#include <stdint.h>'
         f.puts '#include <stddef.h>'
         f.puts ''
-        f.puts "const uint8_t enclose_io_memfs[#{bytes.size}] = { #{bytes[0]}"
+        f.puts "const uint8_t ruby_packer_memfs[#{bytes.size}] = { #{bytes[0]}"
         i = 1
         while i < bytes.size
           f.print ','
@@ -691,22 +691,22 @@ class Compiler
     end
   end
 
-  def make_enclose_io_vars
+  def make_ruby_packer_vars
     @utils.chdir(@vendor_ruby) do
-      File.open("include/enclose_io.h", "w") do |f|
-        # remember to change libsquash's sample/enclose_io.h as well
+      File.open("include/ruby_packer.h", "w") do |f|
+        # remember to change libsquash's sample/ruby_packer.h as well
         # might need to remove some object files at the 2nd pass  
         f.puts '#ifndef RUBY_PACKER_H_999BC1DA'
         f.puts '#define RUBY_PACKER_H_999BC1DA'
         f.puts ''
-        f.puts '#include "enclose_io_prelude.h"'
-        f.puts '#include "enclose_io_common.h"'
-        f.puts '#include "enclose_io_win32.h"'
-        f.puts '#include "enclose_io_unix.h"'
+        f.puts '#include "ruby_packer_prelude.h"'
+        f.puts '#include "ruby_packer_common.h"'
+        f.puts '#include "ruby_packer_win32.h"'
+        f.puts '#include "ruby_packer_unix.h"'
         f.puts ''
         f.puts "#define RUBY_PACKER_ENV_BUNDLE_GEMFILE #{@env_bundle_gemfile.inspect}" if @env_bundle_gemfile
         f.puts "#define RUBY_PACKER_ENTRANCE #{@memfs_entrance.inspect}" if @entrance
-        f.puts "#define RUBY_PACKER_RAILS 1" if @enclose_io_rails
+        f.puts "#define RUBY_PACKER_RAILS 1" if @ruby_packer_rails
         f.puts '#endif'
         f.puts ''
       end
