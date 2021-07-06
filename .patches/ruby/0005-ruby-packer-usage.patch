@@ -1,58 +1,56 @@
-From 66381eb73df65b78a37d2f5a4251120b3e14ecd8 Mon Sep 17 00:00:00 2001
+From d08676f89b80cb77aef7c40de4ab15ab8b8eca2a Mon Sep 17 00:00:00 2001
 From: Alexey Morozov <alexey.morozov.is@gmail.com>
 Date: Wed, 26 May 2021 20:05:44 +0300
-Subject: [PATCH 5/7] enclose io usage
+Subject: [PATCH 5/7] ruby packer usage
 
 ---
- ruby/dir.c                        | 23 +++++++++--
- ruby/dln.c                        |  4 ++
- ruby/ext/openssl/ossl_x509store.c |  9 ++++
- ruby/file.c                       |  4 ++
- ruby/io.c                         |  4 ++
- ruby/lib/rubygems/path_support.rb | 16 ++++++++
- ruby/prelude.c                    | 56 +++++++++++++++++++++++++
- ruby/process.c                    | 68 +++++++++++++++++++++++++++++++
+ ruby/dir.c                        | 21 ++++++++--
+ ruby/dln.c                        |  2 +
+ ruby/ext/openssl/ossl_x509store.c |  5 +++
+ ruby/file.c                       |  2 +
+ ruby/io.c                         |  2 +
+ ruby/lib/rubygems/path_support.rb | 12 ++++++
+ ruby/prelude.c                    | 54 ++++++++++++++++++++++++++
+ ruby/process.c                    | 64 +++++++++++++++++++++++++++++++
  ruby/tool/mkconfig.rb             | 16 ++++++++
- ruby/util.c                       |  4 ++
- ruby/win32/file.c                 |  4 ++
- ruby/win32/win32.c                | 40 ++++++++++++++++++
- 12 files changed, 244 insertions(+), 4 deletions(-)
+ ruby/util.c                       |  2 +
+ ruby/win32/file.c                 |  2 +
+ ruby/win32/win32.c                | 36 +++++++++++++++++
+ 12 files changed, 214 insertions(+), 4 deletions(-)
 
 diff --git a/ruby/dir.c b/ruby/dir.c
-index 29c3e5af..4dac3a75 100644
+index d5672632..a16dc355 100644
 --- a/ruby/dir.c
 +++ b/ruby/dir.c
-@@ -127,6 +127,10 @@ char *strchr(char*,char);
+@@ -127,6 +127,8 @@ char *strchr(char*,char);
  # define NORMALIZE_UTF8PATH 0
  #endif
 
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer.h"
 +
  #if NORMALIZE_UTF8PATH
  #include <sys/param.h>
  #include <sys/mount.h>
-@@ -144,8 +148,10 @@ need_normalization(DIR *dirp, const char *path)
+@@ -144,8 +146,10 @@ need_normalization(DIR *dirp, const char *path)
      u_int32_t attrbuf[SIZEUP32(fsobj_tag_t)];
      struct attrlist al = {ATTR_BIT_MAP_COUNT, 0, ATTR_CMN_OBJTAG,};
  #   if defined HAVE_FGETATTRLIST
 +    if (squash_find_entry(dirp)) { return FALSE; }
      int ret = fgetattrlist(dirfd(dirp), &al, attrbuf, sizeof(attrbuf), 0);
  #   else
-+    if (enclose_io_is_path(path)) { return FALSE; }
++    if (ruby_packer_is_path(path)) { return FALSE; }
      int ret = getattrlist(path, &al, attrbuf, sizeof(attrbuf), 0);
  #   endif
      if (!ret) {
-@@ -567,8 +573,13 @@ dir_initialize(int argc, VALUE *argv, VALUE dir)
+@@ -567,8 +571,13 @@ dir_initialize(int argc, VALUE *argv, VALUE dir)
  	else if (e == EIO) {
  	    u_int32_t attrbuf[1];
  	    struct attrlist al = {ATTR_BIT_MAP_COUNT, 0};
 -	    if (getattrlist(path, &al, attrbuf, sizeof(attrbuf), FSOPT_NOFOLLOW) == 0) {
 -		dp->dir = opendir_without_gvl(path);
-+        if (enclose_io_is_path(path)) {
++        if (ruby_packer_is_path(path)) {
 +            struct stat buf;
-+            if (0 == squash_lstat(enclose_io_fs, path, &buf)) {
++            if (0 == squash_lstat(ruby_packer_fs, path, &buf)) {
 +                dp->dir = opendir_without_gvl(path);
 +            }
 +        } else if (getattrlist(path, &al, attrbuf, sizeof(attrbuf), FSOPT_NOFOLLOW) == 0) {
@@ -60,7 +58,7 @@ index 29c3e5af..4dac3a75 100644
  	    }
  	}
  #endif
-@@ -1772,9 +1783,13 @@ is_case_sensitive(DIR *dirp, const char *path)
+@@ -1772,9 +1781,13 @@ is_case_sensitive(DIR *dirp, const char *path)
      const uint32_t mask = VOL_CAP_FMT_CASE_SENSITIVE;
 
  #   if defined HAVE_FGETATTRLIST
@@ -69,168 +67,154 @@ index 29c3e5af..4dac3a75 100644
      if (fgetattrlist(dirfd(dirp), &al, attrbuf, sizeof(attrbuf), FSOPT_NOFOLLOW))
  	return -1;
  #   else
-+    if (enclose_io_is_path(path)) { return 1; }
++    if (ruby_packer_is_path(path)) { return 1; }
 +
      if (getattrlist(path, &al, attrbuf, sizeof(attrbuf), FSOPT_NOFOLLOW))
  	return -1;
  #   endif
-@@ -2387,7 +2402,7 @@ glob_helper(
+@@ -2391,7 +2404,7 @@ glob_helper(
  		    break;
  		}
  #if USE_NAME_ON_FS == USE_NAME_ON_FS_REAL_BASENAME
 -		if ((*cur)->type == ALPHA) {
-+		if ((*cur)->type == ALPHA && !enclose_io_if(buf)) {
++		if ((*cur)->type == ALPHA && !ruby_packer_if(buf)) {
  		    buf = replace_real_basename(buf, pathlen + (dirsep != 0), enc,
  						IF_NORMALIZE_UTF8PATH(1)+0,
  						flags, &new_pathtype);
-@@ -3329,7 +3344,7 @@ rb_dir_s_empty_p(VALUE obj, VALUE dirname)
+@@ -3362,7 +3375,7 @@ rb_dir_s_empty_p(VALUE obj, VALUE dirname)
      path = RSTRING_PTR(dirname);
 
  #if defined HAVE_GETATTRLIST && defined ATTR_DIR_ENTRYCOUNT
 -    {
-+    if (!enclose_io_is_path(path)) {
++    if (!ruby_packer_is_path(path)) {
  	u_int32_t attrbuf[SIZEUP32(fsobj_tag_t)];
  	struct attrlist al = {ATTR_BIT_MAP_COUNT, 0, ATTR_CMN_OBJTAG,};
  	if (getattrlist(path, &al, attrbuf, sizeof(attrbuf), 0) != 0)
 diff --git a/ruby/dln.c b/ruby/dln.c
-index f0a7e778..d536d008 100644
+index f0a7e778..aba56af2 100644
 --- a/ruby/dln.c
 +++ b/ruby/dln.c
-@@ -116,6 +116,10 @@ dln_loaderror(const char *format, ...)
+@@ -116,6 +116,8 @@ dln_loaderror(const char *format, ...)
  #define isdirsep(x) ((x) == '/')
  #endif
 
-+// ======= [Enclose.io Hack start] =========
-+#include "enclose_io.h"
-+// ======= [Enclose.io Hack end] =========
++#include "ruby_packer.h"
 +
  static size_t
  init_funcname_len(const char **file)
  {
 diff --git a/ruby/ext/openssl/ossl_x509store.c b/ruby/ext/openssl/ossl_x509store.c
-index 2909eeda..4c932950 100644
+index 2909eeda..cf280db0 100644
 --- a/ruby/ext/openssl/ossl_x509store.c
 +++ b/ruby/ext/openssl/ossl_x509store.c
-@@ -332,6 +332,10 @@ ossl_x509store_add_file(VALUE self, VALUE file)
+@@ -332,6 +332,8 @@ ossl_x509store_add_file(VALUE self, VALUE file)
   *
   * Adds _path_ as the hash dir to be looked up by the store.
   */
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io_prelude.h"
-+#include "enclose_io_common.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer_prelude.h"
++#include "ruby_packer_common.h"
  static VALUE
  ossl_x509store_add_path(VALUE self, VALUE dir)
  {
-@@ -346,6 +350,11 @@ ossl_x509store_add_path(VALUE self, VALUE dir)
+@@ -346,6 +348,9 @@ ossl_x509store_add_path(VALUE self, VALUE dir)
      GetX509Store(self, store);
      lookup = X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir());
      if(lookup == NULL) ossl_raise(eX509StoreError, NULL);
-+    // --------- [Enclose.io Hack start] ---------
 +    #ifdef RUBY_PACKER_RUBYC_2ND_PASS
-+      path = enclose_io_ifextract(path, NULL);
++      path = ruby_packer_ifextract(path, NULL);
 +    #endif
-+    // --------- [Enclose.io Hack end] ---------
      if(X509_LOOKUP_add_dir(lookup, path, X509_FILETYPE_PEM) != 1){
          ossl_raise(eX509StoreError, NULL);
      }
 diff --git a/ruby/file.c b/ruby/file.c
-index 3413967f..e7ff07ae 100644
+index 3413967f..daafa41a 100644
 --- a/ruby/file.c
 +++ b/ruby/file.c
-@@ -89,6 +89,10 @@ int flock(int, int);
+@@ -89,6 +89,8 @@ int flock(int, int);
  #define lstat stat
  #endif
 
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer.h"
 +
  /* define system APIs */
  #ifdef _WIN32
  #include "win32/file.h"
 diff --git a/ruby/io.c b/ruby/io.c
-index 3858d563..2573b2dd 100644
+index 633a90f8..e8e03d64 100644
 --- a/ruby/io.c
 +++ b/ruby/io.c
-@@ -144,6 +144,10 @@ off_t __syscall(quad_t number, ...);
+@@ -144,6 +144,8 @@ off_t __syscall(quad_t number, ...);
  #  define RUBY_PIPE_NONBLOCK_DEFAULT    (0)
  #endif
 
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer.h"
 +
  VALUE rb_cIO;
  VALUE rb_eEOFError;
  VALUE rb_eIOError;
 diff --git a/ruby/lib/rubygems/path_support.rb b/ruby/lib/rubygems/path_support.rb
-index ed680d65..108b6422 100644
+index ed680d65..90ae30d9 100644
 --- a/ruby/lib/rubygems/path_support.rb
 +++ b/ruby/lib/rubygems/path_support.rb
-@@ -25,6 +25,13 @@ class Gem::PathSupport
+@@ -25,6 +25,11 @@ class Gem::PathSupport
    def initialize(env)
      @home = env["GEM_HOME"] || Gem.default_dir
 
-+    # --------- [Enclose.io Hack start] ---------
 +    # WE DO NOT ACCEPT OUTSIDE GEM PATHS
 +    unless env['RUBY_PACKER_RUBYC_1ST_PASS']
-+      @home = Gem.default_dir unless 0 == @home.index('/__enclose_io_memfs__')
++      @home = Gem.default_dir unless 0 == @home.index('/__ruby_packer_memfs__')
 +    end
-+    # --------- [Enclose.io Hack end] ---------
 +
      if File::ALT_SEPARATOR
        @home = @home.gsub(File::ALT_SEPARATOR, File::SEPARATOR)
      end
-@@ -33,6 +40,15 @@ def initialize(env)
+@@ -33,6 +38,13 @@ def initialize(env)
 
      @path = split_gem_path env["GEM_PATH"], @home
 
-+    # --------- [Enclose.io Hack start] ---------
 +    # WE DO NOT ACCEPT OUTSIDE GEM PATHS
 +    unless env['RUBY_PACKER_RUBYC_1ST_PASS']
 +      @path.keep_if do |x|
-+        0 == x.index('/__enclose_io_memfs__')
++        0 == x.index('/__ruby_packer_memfs__')
 +      end
 +    end
-+    # --------- [Enclose.io Hack end] ---------
 +
      @spec_cache_dir = env["GEM_SPEC_CACHE"] || Gem.default_spec_cache_dir
 
      @spec_cache_dir = @spec_cache_dir.dup.untaint
 diff --git a/ruby/prelude.c b/ruby/prelude.c
-index 2a426e3b..599555a4 100644
+index 2a426e3b..756be68b 100644
 --- a/ruby/prelude.c
 +++ b/ruby/prelude.c
 @@ -198,6 +198,55 @@ static const struct {
  #line 199 "prelude.c"
  };
 
-+static const char prelude_name_enclose_io[] = "<internal:enclose_io_prelude>";
-+static const char prelude_code_enclose_io[] =
++static const char prelude_name_ruby_packer[] = "<internal:ruby_packer_prelude>";
++static const char prelude_code_ruby_packer[] =
 +"\n class << Process"
-+"\n   alias :spawn_before_enclose_io :spawn"
++"\n   alias :spawn_before_ruby_packer :spawn"
 +"\n   def spawn(arg0, *args)"
-+"\n     if arg0.kind_of?(Hash) && args[0].kind_of?(String) && '/__enclose_io_memfs__' == args[0][0...21]"
++"\n     if arg0.kind_of?(Hash) && args[0].kind_of?(String) && '/__ruby_packer_memfs__' == args[0][0...21]"
 +"\n       arg0 = arg0.dup"
 +"\n       args[0] = args[0].dup"
 +"\n       arg0['RUBY_PACKER_USE_ORIGINAL_RUBY'] = '1'"
-+"\n       args[0] = Process.enclose_io_execpath + ' ' + args[0]"
++"\n       args[0] = Process.ruby_packer_execpath + ' ' + args[0]"
 +"\n     end"
-+"\n     spawn_before_enclose_io(arg0, *args)"
++"\n     spawn_before_ruby_packer(arg0, *args)"
 +"\n   end"
 +"\n end"
 +"\n class << IO"
-+"\n   alias :popen_before_enclose_io :popen"
++"\n   alias :popen_before_ruby_packer :popen"
 +"\n   def popen(*args, &block)"
 +"\n     if args[0].kind_of?(Array)"
-+"\n       if args[0][0].kind_of?(String) && '/__enclose_io_memfs__' == args[0][0][0...21]"
++"\n       if args[0][0].kind_of?(String) && '/__ruby_packer_memfs__' == args[0][0][0...21]"
 +"\n         args[0] = args[0].dup"
-+"\n         args[0][0] = enclose_io_memfs_extract(args[0][0], 'exe')"
++"\n         args[0][0] = ruby_packer_memfs_extract(args[0][0], 'exe')"
 +"\n         File.chmod(0755, args[0][0])"
 +"\n       end"
 +"\n     end"
-+"\n     popen_before_enclose_io(*args, &block)"
++"\n     popen_before_ruby_packer(*args, &block)"
 +"\n   end"
 +"\n end"
 +"\n require 'fileutils'"
@@ -241,7 +225,7 @@ index 2a426e3b..599555a4 100644
 +"\n     Dir.chdir(x) do"
 +"\n       FileUtils.mkdir_p('config')"
 +"\n       Dir.chdir('config') do"
-+"\n         Dir['/__enclose_io_memfs__/local/config/*'].each do |fullpath|"
++"\n         Dir['/__ruby_packer_memfs__/local/config/*'].each do |fullpath|"
 +"\n           unless fullpath =~ /\\.rb$/ || File.exist?(File.basename(fullpath)) || !File.file?(fullpath)"
 +"\n             FileUtils.cp(fullpath, File.basename(fullpath))"
 +"\n           end"
@@ -249,56 +233,51 @@ index 2a426e3b..599555a4 100644
 +"\n       end"
 +"\n     end"
 +"\n   end"
-+"\n   enclose_io_set_mkdir_workdir(x)"
++"\n   ruby_packer_set_mkdir_workdir(x)"
 +"\n end"
 +"\n if ENV['RUBY_PACKER_RAILS']"
-+"\n   Dir.chdir('/__enclose_io_memfs__/local')"
++"\n   Dir.chdir('/__ruby_packer_memfs__/local')"
 +"\n end"
 +;
 
  #define PRELUDE_NAME(n) rb_usascii_str_new_static(prelude_name##n, sizeof(prelude_name##n)-1)
  #define PRELUDE_CODE(n) rb_usascii_str_new_static(prelude_code##n.L0, sizeof(prelude_code##n))
-@@ -239,6 +288,13 @@ Init_prelude(void)
+@@ -239,6 +288,11 @@ Init_prelude(void)
      prelude_eval(PRELUDE_CODE(0), PRELUDE_NAME(0), 1);
      prelude_eval(PRELUDE_CODE(1), PRELUDE_NAME(1), 1);
 
-+// --------- [Enclose.io Hack start] ---------
 +    prelude_eval(
-+      rb_usascii_str_new(prelude_code_enclose_io, sizeof(prelude_code_enclose_io) - 1),
-+      rb_usascii_str_new(prelude_name_enclose_io, sizeof(prelude_name_enclose_io) - 1),
++      rb_usascii_str_new(prelude_code_ruby_packer, sizeof(prelude_code_ruby_packer) - 1),
++      rb_usascii_str_new(prelude_name_ruby_packer, sizeof(prelude_name_ruby_packer) - 1),
 +      INT2FIX(1));
-+// --------- [Enclose.io Hack end] ---------
 +
  #if 0
      printf("%.*s", (int)sizeof(prelude_code0), prelude_code0.L0);
      printf("%.*s", (int)sizeof(prelude_code1), prelude_code1.L0);
 diff --git a/ruby/process.c b/ruby/process.c
-index 6ec48290..dc9e5c54 100644
+index 6ec48290..1a363801 100644
 --- a/ruby/process.c
 +++ b/ruby/process.c
-@@ -8044,6 +8044,12 @@ InitVM_process(void)
+@@ -8044,6 +8044,10 @@ InitVM_process(void)
      rb_define_global_function("exit!", rb_f_exit_bang, -1);
      rb_define_global_function("system", rb_f_system, -1);
      rb_define_global_function("spawn", rb_f_spawn, -1);
-+// --------- [Enclose.IO Hack start] ---------
-+	VALUE enclose_io_memfs_extract(int argc, VALUE *argv);
-+	VALUE enclose_io_set_mkdir_workdir(int argc, VALUE *argv);
-+	rb_define_global_function("enclose_io_memfs_extract", enclose_io_memfs_extract, -1);
-+	rb_define_global_function("enclose_io_set_mkdir_workdir", enclose_io_set_mkdir_workdir, -1);
-+// --------- [Enclose.IO Hack end] ---------
++	VALUE ruby_packer_memfs_extract(int argc, VALUE *argv);
++	VALUE ruby_packer_set_mkdir_workdir(int argc, VALUE *argv);
++	rb_define_global_function("ruby_packer_memfs_extract", ruby_packer_memfs_extract, -1);
++	rb_define_global_function("ruby_packer_set_mkdir_workdir", ruby_packer_set_mkdir_workdir, -1);
      rb_define_global_function("sleep", rb_f_sleep, -1);
      rb_define_global_function("exit", rb_f_exit, -1);
      rb_define_global_function("abort", rb_f_abort, -1);
-@@ -8501,3 +8507,65 @@ Init_process(void)
+@@ -8501,3 +8505,63 @@ Init_process(void)
 
      InitVM(process);
  }
 +
-+// --------- [Enclose.IO Hack start] ---------
 +#include <wchar.h>
-+#include "enclose_io_prelude.h"
-+#include "enclose_io_common.h"
-+VALUE enclose_io_memfs_extract(int argc, VALUE *argv)
++#include "ruby_packer_prelude.h"
++#include "ruby_packer_common.h"
++VALUE ruby_packer_memfs_extract(int argc, VALUE *argv)
 +{
 +#ifdef _WIN32
 +	char mbs_buf[(32767+1)*2+1];
@@ -318,12 +297,12 @@ index 6ec48290..dc9e5c54 100644
 +		has_ext_name = 0;
 +		path = StringValueCStr(argv[0]);
 +	} else {
-+		rb_raise(rb_eRuntimeError, "bad number of arguments passed to enclose_io_memfs_extract");
++		rb_raise(rb_eRuntimeError, "bad number of arguments passed to ruby_packer_memfs_extract");
 +	}
 +	if (has_ext_name) {
-+		ret = squash_extract(enclose_io_fs, path, ext_name);
++		ret = squash_extract(ruby_packer_fs, path, ext_name);
 +	} else {
-+		ret = squash_extract(enclose_io_fs, path, NULL);
++		ret = squash_extract(ruby_packer_fs, path, NULL);
 +	}
 +	if (!ret) {
 +		return Qnil;
@@ -331,7 +310,7 @@ index 6ec48290..dc9e5c54 100644
 +#ifdef _WIN32
 +	length = wcstombs(mbs_buf, ret, sizeof(mbs_buf));
 +	if ((size_t)-1 == length) {
-+		rb_raise(rb_eRuntimeError, "wcstombs failed in enclose_io_memfs_extract");
++		rb_raise(rb_eRuntimeError, "wcstombs failed in ruby_packer_memfs_extract");
 +	}
 +	str = rb_sprintf("%s", mbs_buf);
 +#else
@@ -341,7 +320,7 @@ index 6ec48290..dc9e5c54 100644
 +}
 +#include <string.h>
 +extern SQUASH_OS_PATH mkdir_workdir;
-+VALUE enclose_io_set_mkdir_workdir(int argc, VALUE *argv)
++VALUE ruby_packer_set_mkdir_workdir(int argc, VALUE *argv)
 +{
 +	MUTEX_LOCK(&squash_global_mutex);
 +	if (NULL != mkdir_workdir) {
@@ -350,13 +329,12 @@ index 6ec48290..dc9e5c54 100644
 +	if (1 == argc) {
 +		mkdir_workdir = strdup(StringValueCStr(argv[0]));
 +	} else {
-+		rb_raise(rb_eRuntimeError, "bad number of arguments passed to enclose_io_set_mkdir_workdir");
++		rb_raise(rb_eRuntimeError, "bad number of arguments passed to ruby_packer_set_mkdir_workdir");
 +	}
 +	MUTEX_UNLOCK(&squash_global_mutex);
 +}
-+// --------- [Enclose.IO Hack end] ---------
 diff --git a/ruby/tool/mkconfig.rb b/ruby/tool/mkconfig.rb
-index 5da0e7da..d10abbaa 100755
+index 5da0e7da..75dbb269 100755
 --- a/ruby/tool/mkconfig.rb
 +++ b/ruby/tool/mkconfig.rb
 @@ -127,6 +127,22 @@
@@ -368,14 +346,14 @@ index 5da0e7da..d10abbaa 100755
 +      v_head_comp = "  CONFIG[\"prefix\"] #{eq} "
 +      if v_head_comp == v[0...(v_head_comp.length)]
 +        if win32
-+          v = "#{v[0...(v_head_comp.length)]}CONFIG[\"RUBY_EXEC_PREFIX\"] = '/__enclose_io_memfs__'\n"
++          v = "#{v[0...(v_head_comp.length)]}CONFIG[\"RUBY_EXEC_PREFIX\"] = '/__ruby_packer_memfs__'\n"
 +        else
-+          v = "#{v[0...(v_head_comp.length)]}'/__enclose_io_memfs__'\n"
++          v = "#{v[0...(v_head_comp.length)]}'/__ruby_packer_memfs__'\n"
 +        end
 +      end
 +      v_head_comp = "  CONFIG[\"RUBY_EXEC_PREFIX\"] #{eq} "
 +      if v_head_comp == v[0...(v_head_comp.length)]
-+        v = "#{v[0...(v_head_comp.length)]}'/__enclose_io_memfs__'\n"
++        v = "#{v[0...(v_head_comp.length)]}'/__ruby_packer_memfs__'\n"
 +      end
 +    end
 +
@@ -383,52 +361,46 @@ index 5da0e7da..d10abbaa 100755
        v_fast << v
      else
 diff --git a/ruby/util.c b/ruby/util.c
-index df19fd4c..d52e9a51 100644
+index df19fd4c..0366eb02 100644
 --- a/ruby/util.c
 +++ b/ruby/util.c
-@@ -30,6 +30,10 @@
+@@ -30,6 +30,8 @@
  const char ruby_hexdigits[] = "0123456789abcdef0123456789ABCDEF";
  #define hexdigit ruby_hexdigits
 
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer.h"
 +
  unsigned long
  ruby_scan_oct(const char *start, size_t len, size_t *retlen)
  {
 diff --git a/ruby/win32/file.c b/ruby/win32/file.c
-index 446720c2..064f730a 100644
+index 446720c2..c9dcee1e 100644
 --- a/ruby/win32/file.c
 +++ b/ruby/win32/file.c
-@@ -10,6 +10,10 @@
+@@ -10,6 +10,8 @@
  #include <shlwapi.h>
  #include "win32/file.h"
 
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer.h"
 +
  #ifndef INVALID_FILE_ATTRIBUTES
  # define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
  #endif
 diff --git a/ruby/win32/win32.c b/ruby/win32/win32.c
-index d28bd564..09f26178 100644
+index d28bd564..803a537a 100644
 --- a/ruby/win32/win32.c
 +++ b/ruby/win32/win32.c
-@@ -56,6 +56,11 @@
+@@ -56,6 +56,9 @@
  #include "id.h"
  #include "internal.h"
  #include "encindex.h"
 +
-+// --------- [Enclose.io Hack start] ---------
-+#include "enclose_io.h"
-+// --------- [Enclose.io Hack end] ---------
++#include "ruby_packer.h"
 +
  #define isdirsep(x) ((x) == '/' || (x) == '\\')
 
  #if defined _MSC_VER && _MSC_VER <= 1200
-@@ -849,6 +854,11 @@ static int w32_cmdvector(const WCHAR *, char ***, UINT, rb_encoding *);
+@@ -849,6 +852,11 @@ static int w32_cmdvector(const WCHAR *, char ***, UINT, rb_encoding *);
  void
  rb_w32_sysinit(int *argc, char ***argv)
  {
@@ -440,11 +412,10 @@ index d28bd564..09f26178 100644
  #if RUBY_MSVCRT_VERSION >= 80
      static void set_pioinfo_extra(void);
 
-@@ -866,6 +876,28 @@ rb_w32_sysinit(int *argc, char ***argv)
+@@ -866,6 +874,26 @@ rb_w32_sysinit(int *argc, char ***argv)
      //
      *argc = w32_cmdvector(GetCommandLineW(), argv, CP_UTF8, &OnigEncodingUTF_8);
 
-+    // --------- [Enclose.io Hack start] ---------
 +    #ifdef RUBY_PACKER_ENTRANCE
 +    new_argc = *argc;
 +    new_argv = *argv;
@@ -463,13 +434,12 @@ index d28bd564..09f26178 100644
 +        *argv = new_argv;
 +    }
 +    #endif
-+    // --------- [Enclose.io Hack end] ---------
 +
 +
      //
      // Now set up the correct time stuff
      //
-@@ -1867,6 +1899,9 @@ w32_cmdvector(const WCHAR *cmd, char ***vec, UINT cp, rb_encoding *enc)
+@@ -1867,6 +1895,9 @@ w32_cmdvector(const WCHAR *cmd, char ***vec, UINT cp, rb_encoding *enc)
  	curr = (NtCmdLineElement *)calloc(sizeof(NtCmdLineElement), 1);
  	if (!curr) goto do_nothing;
  	curr->str = rb_w32_wstr_to_mbstr(cp, base, len, &curr->len);
@@ -479,7 +449,7 @@ index d28bd564..09f26178 100644
  	curr->flags |= NTMALLOC;
 
  	if (globbing && (tail = cmdglob(curr, cmdtail, cp, enc))) {
-@@ -7040,6 +7075,11 @@ rb_w32_read(int fd, void *buf, size_t size)
+@@ -7040,6 +7071,11 @@ rb_w32_read(int fd, void *buf, size_t size)
  	return -1;
      }
 

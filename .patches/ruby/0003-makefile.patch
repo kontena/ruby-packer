@@ -1,14 +1,14 @@
-From 52c7e41502543ecb4f1e60d3c2c3bb4a8f54b680 Mon Sep 17 00:00:00 2001
+From 9b2aa1b2faca7693d211246f03db0327b4c8adc7 Mon Sep 17 00:00:00 2001
 From: Alexey Morozov <alexey.morozov.is@gmail.com>
 Date: Wed, 26 May 2021 18:34:49 +0300
 Subject: [PATCH 3/7] makefile
 
 ---
  ruby/Makefile.in        |  6 +++---
- ruby/ext/dbm/extconf.rb |  3 +++
+ ruby/ext/dbm/extconf.rb |  1 +
  ruby/lib/mkmf.rb        |  6 +++---
  ruby/win32/Makefile.sub | 44 ++++++++++++++++++++++++++++++++++++-----
- 4 files changed, 48 insertions(+), 11 deletions(-)
+ 4 files changed, 46 insertions(+), 11 deletions(-)
 
 diff --git a/ruby/Makefile.in b/ruby/Makefile.in
 index fa1e19ef..5cba915a 100644
@@ -40,16 +40,14 @@ index fa1e19ef..5cba915a 100644
 
  $(LIBRUBY_SO):
 diff --git a/ruby/ext/dbm/extconf.rb b/ruby/ext/dbm/extconf.rb
-index c9a5518b..e85376fb 100644
+index c9a5518b..8b636a68 100644
 --- a/ruby/ext/dbm/extconf.rb
 +++ b/ruby/ext/dbm/extconf.rb
-@@ -26,6 +26,9 @@
+@@ -26,6 +26,7 @@
  else
    dblib = %w(libc db db2 db1 db6 db5 db4 db3 gdbm_compat gdbm qdbm)
  end
-+# --------- [Enclose.io Hack start] ---------
 +dblib = %w(gdbm_compat)
-+# --------- [Enclose.io Hack end] ---------
 
  headers = {
    "libc" => ["ndbm.h"], # 4.3BSD original ndbm, Berkeley DB 1 in 4.4BSD libc.
@@ -79,7 +77,7 @@ index 0d9d3d9f..4257952e 100644
    end
 
 diff --git a/ruby/win32/Makefile.sub b/ruby/win32/Makefile.sub
-index 9ee5ddd5..0bb42f2b 100644
+index 9ee5ddd5..b347ace7 100644
 --- a/ruby/win32/Makefile.sub
 +++ b/ruby/win32/Makefile.sub
 @@ -275,7 +275,7 @@ EXTLIBS =
@@ -142,7 +140,7 @@ index 9ee5ddd5..0bb42f2b 100644
  $(PROGRAM):	$(MAINOBJ) $(LIBRUBY_SO) $(RUBY_INSTALL_NAME).res
  		$(ECHO) linking $(@:\=/)
 -		$(Q) $(PURIFY) $(CC) $(MAINOBJ) $(EXTOBJS) $(RUBY_INSTALL_NAME).res \
-+		$(Q) $(PURIFY) $(CC) $(CFLAGS) $(MAINOBJ) $(EXTOBJS) enclose_io_unix.obj enclose_io_memfs.obj squash_fd.obj Shell32.lib $(RUBY_INSTALL_NAME).res \
++		$(Q) $(PURIFY) $(CC) $(CFLAGS) $(MAINOBJ) $(EXTOBJS) ruby_packer_unix.obj ruby_packer_memfs.obj squash_fd.obj Shell32.lib $(RUBY_INSTALL_NAME).res \
  			$(OUTFLAG)$@ $(LIBRUBYARG) -link $(LDFLAGS) $(XLDFLAGS)
  		$(Q) $(LDSHARED_0)
  		$(Q) $(LDSHARED_1)
@@ -151,7 +149,7 @@ index 9ee5ddd5..0bb42f2b 100644
  $(WPROGRAM):	$(MAINOBJ) $(WINMAINOBJ) $(LIBRUBY_SO) $(RUBYW_INSTALL_NAME).res
  		$(ECHO) linking $(@:\=/)
 -		$(Q) $(PURIFY) $(CC) $(MAINOBJ) $(WINMAINOBJ) \
-+		$(Q) $(PURIFY) $(CC) $(CFLAGS) $(MAINOBJ) enclose_io_unix.obj enclose_io_memfs.obj squash_fd.obj Shell32.lib $(WINMAINOBJ) \
++		$(Q) $(PURIFY) $(CC) $(CFLAGS) $(MAINOBJ) ruby_packer_unix.obj ruby_packer_memfs.obj squash_fd.obj Shell32.lib $(WINMAINOBJ) \
  			$(RUBYW_INSTALL_NAME).res $(OUTFLAG)$@ $(LIBRUBYARG) \
  			-link $(LDFLAGS) $(XLDFLAGS) -subsystem:Windows
  		$(Q) $(LDSHARED_0)

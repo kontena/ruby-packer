@@ -1,0 +1,3306 @@
+From 7a18430ed8fbbc15c5db031c960e1fcc68b21e00 Mon Sep 17 00:00:00 2001
+From: Alexey Morozov <alexey.morozov.is@gmail.com>
+Date: Wed, 26 May 2021 18:46:16 +0300
+Subject: [PATCH 2/7] ruby packer source
+
+---
+ ruby/common.mk                     |    3 +
+ ruby/include/ruby_packer.h         |   17 +
+ ruby/include/ruby_packer_common.h  |  352 ++++++++
+ ruby/include/ruby_packer_prelude.h |   19 +
+ ruby/include/ruby_packer_unix.h    |   47 +
+ ruby/include/ruby_packer_win32.h   |   72 ++
+ ruby/include/ruby_packer_winapi.h  |  246 ++++++
+ ruby/ruby_packer_memfs.c           |   55 ++
+ ruby/ruby_packer_unix.c            | 1124 ++++++++++++++++++++++++
+ ruby/ruby_packer_win32.c           | 1276 ++++++++++++++++++++++++++++
+ 10 files changed, 3211 insertions(+)
+ create mode 100644 ruby/include/ruby_packer.h
+ create mode 100644 ruby/include/ruby_packer_common.h
+ create mode 100644 ruby/include/ruby_packer_prelude.h
+ create mode 100644 ruby/include/ruby_packer_unix.h
+ create mode 100644 ruby/include/ruby_packer_win32.h
+ create mode 100644 ruby/include/ruby_packer_winapi.h
+ create mode 100644 ruby/ruby_packer_memfs.c
+ create mode 100644 ruby/ruby_packer_unix.c
+ create mode 100644 ruby/ruby_packer_win32.c
+
+diff --git a/ruby/common.mk b/ruby/common.mk
+index 79b0fd51..87e7a006 100644
+--- a/ruby/common.mk
++++ b/ruby/common.mk
+@@ -94,6 +94,9 @@ COMMONOBJS    = squash_cache.$(OBJEXT) \
+ 		squash_table.$(OBJEXT) \
+ 		squash_traverse.$(OBJEXT) \
+ 		squash_util.$(OBJEXT) \
++		ruby_packer_memfs.$(OBJEXT) \
++		ruby_packer_unix.$(OBJEXT) \
++		ruby_packer_win32.$(OBJEXT) \
+ 		array.$(OBJEXT) \
+ 		ast.$(OBJEXT) \
+ 		bignum.$(OBJEXT) \
+diff --git a/ruby/include/ruby_packer.h b/ruby/include/ruby_packer.h
+new file mode 100644
+index 00000000..d9caa1cd
+--- /dev/null
++++ b/ruby/include/ruby_packer.h
+@@ -0,0 +1,17 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#ifndef RUBY_PACKER_H_999BC1DA
++#define RUBY_PACKER_H_999BC1DA
++
++#include "ruby_packer_prelude.h"
++#include "ruby_packer_common.h"
++#include "ruby_packer_win32.h"
++#include "ruby_packer_unix.h"
++
++#endif
+diff --git a/ruby/include/ruby_packer_common.h b/ruby/include/ruby_packer_common.h
+new file mode 100644
+index 00000000..49583408
+--- /dev/null
++++ b/ruby/include/ruby_packer_common.h
+@@ -0,0 +1,352 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#ifndef RUBY_PACKER_COMMON_H_39323079
++#define RUBY_PACKER_COMMON_H_39323079
++
++#include "squash.h"
++
++#ifndef __USE_XOPEN_EXTENDED
++#define __USE_XOPEN_EXTENDED
++#endif
++
++#include <stdlib.h>
++#include <stdint.h>
++#include <stddef.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <fcntl.h>
++#include <stdarg.h>
++#include <assert.h>
++
++#ifdef _WIN32
++#include <direct.h>
++#include <Shlwapi.h>
++#else
++#include <sys/param.h>
++#include <sys/uio.h>
++#include <unistd.h>
++#include <ftw.h>
++#include <dirent.h>
++#include <dlfcn.h>
++#endif
++
++extern sqfs *ruby_packer_fs;
++extern sqfs_path ruby_packer_cwd;
++extern const uint8_t ruby_packer_memfs[];
++
++#define RUBY_PACKER_PP_NARG(...) \
++    RUBY_PACKER_PP_NARG_(__VA_ARGS__,RUBY_PACKER_PP_RSEQ_N())
++#define RUBY_PACKER_PP_NARG_(...) \
++    RUBY_PACKER_PP_ARG_N(__VA_ARGS__)
++#define RUBY_PACKER_PP_ARG_N( \
++     _1, _2, _3, _4, _5, _6, _7, _8, _9,_10, \
++    _11,_12,_13,_14,_15,_16,_17,_18,_19,_20, \
++    _21,_22,_23,_24,_25,_26,_27,_28,_29,_30, \
++    _31,_32,_33,_34,_35,_36,_37,_38,_39,_40, \
++    _41,_42,_43,_44,_45,_46,_47,_48,_49,_50, \
++    _51,_52,_53,_54,_55,_56,_57,_58,_59,_60, \
++    _61,_62,_63,  N, ...) N
++#define RUBY_PACKER_PP_RSEQ_N() \
++    63,62,61,60,                   \
++    59,58,57,56,55,54,53,52,51,50, \
++    49,48,47,46,45,44,43,42,41,40, \
++    39,38,37,36,35,34,33,32,31,30, \
++    29,28,27,26,25,24,23,22,21,20, \
++    19,18,17,16,15,14,13,12,11,10, \
++     9, 8, 7, 6, 5, 4, 3, 2, 1, 0
++
++short ruby_packer_is_path(char *pathname);
++short ruby_packer_is_path_w(wchar_t *pathname);
++short ruby_packer_is_relative_w(wchar_t *pathname);
++
++#define RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(PATH, RETURN1, RETURN2) \
++	if (mkdir_workdir) { \
++		sqfs_path mkdir_workdir_expanded; \
++		char *mkdir_workdir_expanded_head; \
++		size_t mkdir_workdir_len; \
++		size_t memcpy_len; \
++		struct stat mkdir_workdir_buf; \
++		mkdir_workdir_len = strlen(mkdir_workdir); \
++		memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len); \
++		memcpy_len = strlen(PATH); \
++		if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) { \
++			memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len; \
++		} \
++		memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], (PATH), memcpy_len); \
++		mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0'; \
++		mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope); \
++		if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) { \
++			memmove(mkdir_workdir_expanded_head, mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope), strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1); \
++			if (0 == stat(mkdir_workdir_expanded, &mkdir_workdir_buf)) { \
++				return(RETURN2); \
++			} \
++		} \
++	} \
++	return(RETURN1)
++
++#define RUBY_PACKER_GEN_EXPANDED_NAME(path)	\
++			ruby_packer_cwd_len = strlen(ruby_packer_cwd); \
++			memcpy(ruby_packer_expanded, ruby_packer_cwd, ruby_packer_cwd_len); \
++			memcpy_len = strlen(path); \
++			if (SQUASHFS_PATH_LEN - ruby_packer_cwd_len < memcpy_len) { memcpy_len = SQUASHFS_PATH_LEN - ruby_packer_cwd_len; } \
++			memcpy(&ruby_packer_expanded[ruby_packer_cwd_len], (path), memcpy_len); \
++			ruby_packer_expanded[ruby_packer_cwd_len + memcpy_len] = '\0'
++
++//TODO maybe use WideCharToMultiByte
++#define W_RUBY_PACKER_PATH_CONVERT(path) \
++			ruby_packer_converted = (char *)ruby_packer_converted_storage; \
++			ruby_packer_converted_length = wcstombs(ruby_packer_converted_storage, (path), SQUASHFS_PATH_LEN); \
++			if ((size_t)-1 == ruby_packer_converted_length) { ruby_packer_converted_length = 0; } \
++			ruby_packer_converted[ruby_packer_converted_length] = '\0'; \
++			if (strnlen(ruby_packer_converted_storage, 4) >= 4 && (0 == strncmp(ruby_packer_converted_storage, "\\\\?\\", 4) || 0 == strncmp(ruby_packer_converted_storage, "//?/", 4))) { \
++				if (strnlen(ruby_packer_converted_storage, 6) >= 6 && ':' == ruby_packer_converted_storage[5]) { \
++					ruby_packer_converted += 6; \
++				} else { \
++					ruby_packer_converted += 4; \
++				} \
++			} else if (strnlen(ruby_packer_converted_storage, 3) >= 3 && (0 == strncmp(ruby_packer_converted_storage + 1, ":\\", 2) || 0 == strncmp(ruby_packer_converted_storage + 1, ":/", 2))) { \
++				ruby_packer_converted += 2; \
++			} \
++			for (ruby_packer_i = ruby_packer_converted; *ruby_packer_i; ruby_packer_i++) { \
++				if ('\\' == *ruby_packer_i) { *ruby_packer_i = '/'; } \
++			}
++
++#define RUBY_PACKER_SET_LAST_ERROR do { \
++			if (ENOMEM == errno) { \
++				SetLastError(ERROR_NOT_ENOUGH_MEMORY); \
++                                _doserrno = ERROR_NOT_ENOUGH_MEMORY; \
++			} else if (ENOENT == errno) { \
++				SetLastError(ERROR_FILE_NOT_FOUND); \
++                                _doserrno = ERROR_FILE_NOT_FOUND; \
++			} else if (EBADF == errno) { \
++				SetLastError(ERROR_INVALID_HANDLE); \
++                                _doserrno = ERROR_INVALID_HANDLE; \
++			} else if (ENAMETOOLONG == errno) { \
++				SetLastError(ERROR_BUFFER_OVERFLOW); \
++                                _doserrno = ERROR_BUFFER_OVERFLOW; \
++			} else { \
++				SetLastError(ERROR_INVALID_FUNCTION); \
++                                _doserrno = ERROR_INVALID_FUNCTION; \
++			} \
++		} while (0)
++
++int ruby_packer_dos_return(int statement);
++short ruby_packer_if(const char* path);
++SQUASH_OS_PATH ruby_packer_ifextract(const char* path, const char* ext_name);
++void ruby_packer_chdir_helper(const char *path);
++int ruby_packer_chdir(const char *path);
++char *ruby_packer_getcwd(char *buf, size_t size);
++char *ruby_packer_getwd(char *buf);
++int ruby_packer_stat(const char *path, struct stat *buf);
++int ruby_packer_fstat(int fildes, struct stat *buf);
++int ruby_packer_open(int nargs, const char *pathname, int flags, ...);
++int ruby_packer_openat(int fd, int nargs, const char *pathname, int flags, ...);
++int ruby_packer_close(int fildes);
++ssize_t ruby_packer_read(int fildes, void *buf, size_t nbyte);
++off_t ruby_packer_lseek(int fildes, off_t offset, int whence);
++
++#ifdef _WIN32
++
++#include "ruby_packer_winapi.h"
++
++int ruby_packer__open(const char *pathname, int flags);
++int ruby_packer__wopen(const wchar_t *pathname, int flags, int mode);
++int ruby_packer__wmkdir(wchar_t* pathname);
++int ruby_packer_open_osfhandle(intptr_t osfhandle, int flags);
++intptr_t ruby_packer_get_osfhandle(int fd);
++int ruby_packer_wchdir(const wchar_t *path);
++wchar_t *ruby_packer_wgetcwd(wchar_t *buf, size_t size);
++int ruby_packer_fstati64(int fildes, struct _stati64 *buf);
++__int64 ruby_packer_lseeki64(int fildes, __int64 offset, int whence);
++
++HANDLE
++RubyPackerCreateFileW(
++	LPCWSTR lpFileName,
++	DWORD dwDesiredAccess,
++	DWORD dwShareMode,
++	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
++	DWORD dwCreationDisposition,
++	DWORD dwFlagsAndAttributes,
++	HANDLE hTemplateFile
++);
++
++NTSTATUS
++RubyPackerpNtQueryDirectoryFile(
++	HANDLE FileHandle,
++	HANDLE Event,
++	PIO_APC_ROUTINE ApcRoutine,
++	PVOID ApcContext,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FileInformation,
++	ULONG Length,
++	FILE_INFORMATION_CLASS FileInformationClass,
++	BOOLEAN ReturnSingleEntry,
++	PUNICODE_STRING FileName,
++	BOOLEAN RestartScan
++);
++
++BOOL
++RubyPackerCloseHandle(
++	HANDLE hObject
++);
++
++DWORD
++RubyPackerGetFileAttributesW(
++    LPCWSTR lpFileName
++);
++
++BOOL
++RubyPackerGetFileAttributesExW(
++    LPCWSTR lpFileName,
++    GET_FILEEX_INFO_LEVELS fInfoLevelId,
++    LPVOID lpFileInformation
++);
++
++NTSTATUS
++RubyPackerpNtQueryInformationFile(
++	HANDLE FileHandle,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FileInformation,
++	ULONG Length,
++	FILE_INFORMATION_CLASS FileInformationClass);
++
++NTSTATUS
++RubyPackerpNtQueryVolumeInformationFile(
++	HANDLE FileHandle,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FsInformation,
++	ULONG Length,
++	FS_INFORMATION_CLASS FsInformationClass);
++
++BOOL
++RubyPackerReadFile(
++	HANDLE       hFile,
++	LPVOID       lpBuffer,
++	DWORD        nNumberOfBytesToRead,
++	LPDWORD      lpNumberOfBytesRead,
++	LPOVERLAPPED lpOverlapped
++);
++
++BOOL
++RubyPackerGetHandleInformation(
++    HANDLE hObject,
++    LPDWORD lpdwFlags
++);
++
++DWORD
++RubyPackerGetFileType(
++        HANDLE hFile
++);
++
++HANDLE
++RubyPackerFindFirstFileW(
++        LPCWSTR lpFileName,
++        LPWIN32_FIND_DATAW lpFindFileData
++);
++
++BOOL
++RubyPackerFindNextFileW(
++        HANDLE hFindFile,
++        LPWIN32_FIND_DATAW lpFindFileData
++);
++
++BOOL
++RubyPackerFindClose(
++        HANDLE hFindFile
++);
++
++BOOL
++RubyPackerDeviceIoControl(
++        HANDLE hDevice,
++        DWORD dwIoControlCode,
++        LPVOID lpInBuffer,
++        DWORD nInBufferSize,
++        LPVOID lpOutBuffer,
++        DWORD nOutBufferSize,
++        LPDWORD lpBytesReturned,
++        LPOVERLAPPED lpOverlapped
++);
++
++HANDLE
++RubyPackerCreateIoCompletionPort(
++        HANDLE FileHandle,
++        HANDLE ExistingCompletionPort,
++        ULONG_PTR CompletionKey,
++        DWORD NumberOfConcurrentThreads
++);
++
++BOOL
++RubyPackerReadDirectoryChangesW(
++        HANDLE hDirectory,
++        LPVOID lpBuffer,
++        DWORD nBufferLength,
++        BOOL bWatchSubtree,
++        DWORD dwNotifyFilter,
++        LPDWORD lpBytesReturned,
++        LPOVERLAPPED lpOverlapped,
++        LPOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
++);
++
++HMODULE
++RubyPackerLoadLibraryExW(
++	LPCWSTR lpLibFileName,
++	HANDLE hFile,
++	DWORD dwFlags
++);
++
++BOOL
++RubyPackerCreateProcessW(
++	LPCWSTR lpApplicationName,
++	LPWSTR lpCommandLine,
++	LPSECURITY_ATTRIBUTES lpProcessAttributes,
++	LPSECURITY_ATTRIBUTES lpThreadAttributes,
++	BOOL bInheritHandles,
++	DWORD dwCreationFlags,
++	LPVOID lpEnvironment,
++	LPCWSTR lpCurrentDirectory,
++	LPSTARTUPINFOW lpStartupInfo,
++	LPPROCESS_INFORMATION lpProcessInformation
++);
++
++BOOL
++RubyPackerSetCurrentDirectoryW(
++	LPCWSTR lpPathName
++);
++
++
++DWORD
++RubyPackerGetCurrentDirectoryW(
++	DWORD nBufferLength,
++	LPWSTR lpBuffer
++);
++
++#else
++int ruby_packer_lstat(const char *path, struct stat *buf);
++ssize_t ruby_packer_readlink(const char *path, char *buf, size_t bufsize);
++DIR * ruby_packer_opendir(const char *filename);
++DIR * ruby_packer_fdopendir(int fd);
++int ruby_packer_closedir(DIR *dirp);
++struct SQUASH_DIRENT * ruby_packer_readdir(DIR *dirp);
++long ruby_packer_telldir(DIR *dirp);
++void ruby_packer_seekdir(DIR *dirp, long loc);
++void ruby_packer_rewinddir(DIR *dirp);
++int ruby_packer_dirfd(DIR *dirp);
++int ruby_packer_scandir(const char *dirname, struct SQUASH_DIRENT ***namelist,
++	int(*select)(const struct SQUASH_DIRENT *),
++	int(*compar)(const struct SQUASH_DIRENT **, const struct SQUASH_DIRENT **));
++ssize_t ruby_packer_pread(int d, void *buf, size_t nbyte, off_t offset);
++ssize_t ruby_packer_readv(int d, const struct iovec *iov, int iovcnt);
++void* ruby_packer_dlopen(const char* path, int mode);
++int ruby_packer_access(const char *path, int mode);
++int ruby_packer_mkdir(const char *path, mode_t mode);
++
++#endif // !_WIN32
++
++#endif
+diff --git a/ruby/include/ruby_packer_prelude.h b/ruby/include/ruby_packer_prelude.h
+new file mode 100644
+index 00000000..2197dece
+--- /dev/null
++++ b/ruby/include/ruby_packer_prelude.h
+@@ -0,0 +1,19 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#ifndef RUBY_PACKER_PRELUDE_H_E46A560C
++#define RUBY_PACKER_PRELUDE_H_E46A560C
++
++#ifdef _WIN32
++#define WINDOWS_H_A80B5674
++typedef unsigned short sqfs_mode_t;
++typedef uint32_t sqfs_id_t;
++typedef DWORD64 sqfs_off_t;
++#endif // _WIN32
++
++#endif /* end of include guard: RUBY_PACKER_PRELUDE_H_E46A560C */
+diff --git a/ruby/include/ruby_packer_unix.h b/ruby/include/ruby_packer_unix.h
+new file mode 100644
+index 00000000..9017988a
+--- /dev/null
++++ b/ruby/include/ruby_packer_unix.h
+@@ -0,0 +1,47 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#ifndef RUBY_PACKER_UNIX_H_E0229A03
++#define RUBY_PACKER_UNIX_H_E0229A03
++#ifndef __cplusplus
++#ifndef _WIN32
++
++	#ifdef dirfd
++		#undef dirfd
++	#endif
++
++	#define getcwd(...)	ruby_packer_getcwd(__VA_ARGS__)
++	#define getwd(...)	ruby_packer_getwd(__VA_ARGS__)
++	#define chdir(...)	ruby_packer_chdir(__VA_ARGS__)
++	#define stat(...)	ruby_packer_stat(__VA_ARGS__)
++	#define fstat(...)	ruby_packer_fstat(__VA_ARGS__)
++	#define lstat(...)	ruby_packer_lstat(__VA_ARGS__)
++	#define open(...)	ruby_packer_open(RUBY_PACKER_PP_NARG(__VA_ARGS__), __VA_ARGS__)
++	#define openat(...)	ruby_packer_openat(RUBY_PACKER_PP_NARG(__VA_ARGS__), __VA_ARGS__)
++	#define close(...)	ruby_packer_close(__VA_ARGS__)
++	#define read(...)	ruby_packer_read(__VA_ARGS__)
++	#define lseek(...)	ruby_packer_lseek(__VA_ARGS__)
++	#define readlink(...)	ruby_packer_readlink(__VA_ARGS__)
++	#define opendir(...)	ruby_packer_opendir(__VA_ARGS__)
++	#define fdopendir(...)	ruby_packer_fdopendir(__VA_ARGS__)
++	#define closedir(...)	ruby_packer_closedir(__VA_ARGS__)
++	#define readdir(...)	ruby_packer_readdir(__VA_ARGS__)
++	#define telldir(...)	ruby_packer_telldir(__VA_ARGS__)
++	#define seekdir(...)	ruby_packer_seekdir(__VA_ARGS__)
++	#define rewinddir(...)	ruby_packer_rewinddir(__VA_ARGS__)
++	#define dirfd(...)	ruby_packer_dirfd(__VA_ARGS__)
++	#define scandir(...)	ruby_packer_scandir(__VA_ARGS__)
++	#define pread(...)	ruby_packer_pread(__VA_ARGS__)
++	#define readv(...)	ruby_packer_readv(__VA_ARGS__)
++	#define dlopen(...)	ruby_packer_dlopen(__VA_ARGS__)
++	#define access(...)	ruby_packer_access(__VA_ARGS__)
++	#define mkdir(...)	ruby_packer_mkdir(__VA_ARGS__)
++
++#endif // !_WIN32
++#endif //!__cplusplus
++#endif
+diff --git a/ruby/include/ruby_packer_win32.h b/ruby/include/ruby_packer_win32.h
+new file mode 100644
+index 00000000..676a9d20
+--- /dev/null
++++ b/ruby/include/ruby_packer_win32.h
+@@ -0,0 +1,72 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#ifndef RUBY_PACKER_WIN32_H_9A3D18C6
++#define RUBY_PACKER_WIN32_H_9A3D18C6
++#ifndef __cplusplus
++#ifdef _WIN32
++
++#ifdef _fstati64
++#undef _fstati64
++#endif
++
++#define chdir(...)	ruby_packer_chdir(__VA_ARGS__)
++
++#ifndef RUBY_EXPORT
++	// Ruby has defined the following symbols to
++	// something like rb_w32_uopen
++	#define getcwd(...)	ruby_packer_getcwd(__VA_ARGS__)
++	#define stat(...)	ruby_packer_stat(__VA_ARGS__)
++	#define fstat(...)	ruby_packer_fstat(__VA_ARGS__)
++	#define open(...)	ruby_packer_open(RUBY_PACKER_PP_NARG(__VA_ARGS__), __VA_ARGS__)
++	#define close(...)	ruby_packer_close(__VA_ARGS__)
++	#define read(...)	ruby_packer_read(__VA_ARGS__)
++	#define lseek(...)	ruby_packer_lseek(__VA_ARGS__)
++
++	// Ruby does not use those things
++	#define pNtQueryDirectoryFile(...) RubyPackerpNtQueryDirectoryFile(__VA_ARGS__)
++	#define pNtQueryInformationFile(...) RubyPackerpNtQueryInformationFile(__VA_ARGS__)
++	#define pNtQueryVolumeInformationFile(...) RubyPackerpNtQueryVolumeInformationFile(__VA_ARGS__)
++#endif // !RUBY_EXPORT
++
++#define _chdir(...) ruby_packer_chdir(__VA_ARGS__)
++#define _wchdir(...) ruby_packer_wchdir(__VA_ARGS__)
++#define _getwd(...) ruby_packer_getwd(__VA_ARGS__)
++#define _wgetwd(...) ruby_packer_wgetwd(__VA_ARGS__)
++#define _fstati64(...)	ruby_packer_fstati64(__VA_ARGS__)
++#define _open(...)	ruby_packer__open(__VA_ARGS__)
++#define _wopen(...)	ruby_packer__wopen(__VA_ARGS__)
++#define _wmkdir(...) ruby_packer__wmkdir(__VA_ARGS__)
++#define _close(...)	ruby_packer_close(__VA_ARGS__)
++#define _open_osfhandle(...) ruby_packer_open_osfhandle(__VA_ARGS__)
++#define _get_osfhandle(...) ruby_packer_get_osfhandle(__VA_ARGS__)
++#define _read(...)	ruby_packer_read(__VA_ARGS__)
++#define _lseeki64(...)	ruby_packer_lseeki64(__VA_ARGS__)
++
++#define CreateFileW(...) RubyPackerCreateFileW(__VA_ARGS__)
++#define CloseHandle(...) RubyPackerCloseHandle(__VA_ARGS__)
++#define ReadFile(...) RubyPackerReadFile(__VA_ARGS__)
++
++#define GetFileAttributesW(...) RubyPackerGetFileAttributesW(__VA_ARGS__)
++#define GetFileAttributesExW(...) RubyPackerGetFileAttributesExW(__VA_ARGS__)
++#define GetHandleInformation(...) RubyPackerGetHandleInformation(__VA_ARGS__)
++#define GetFileType(...) RubyPackerGetFileType(__VA_ARGS__)
++#define FindFirstFileW(...) RubyPackerFindFirstFileW(__VA_ARGS__)
++#define FindNextFileW(...) RubyPackerFindNextFileW(__VA_ARGS__)
++#define FindClose(...) RubyPackerFindClose(__VA_ARGS__)
++#define DeviceIoControl(...) RubyPackerDeviceIoControl(__VA_ARGS__)
++#define CreateIoCompletionPort(...) RubyPackerCreateIoCompletionPort(__VA_ARGS__)
++#define ReadDirectoryChangesW(...) RubyPackerReadDirectoryChangesW(__VA_ARGS__)
++#define LoadLibraryExW(...) RubyPackerLoadLibraryExW(__VA_ARGS__)
++#define CreateProcessW(...) RubyPackerCreateProcessW(__VA_ARGS__)
++#define SetCurrentDirectoryW(...) RubyPackerSetCurrentDirectoryW(__VA_ARGS__)
++#define GetCurrentDirectoryW(...) RubyPackerGetCurrentDirectoryW(__VA_ARGS__)
++
++#endif //_WIN32
++#endif //!__cplusplus
++#endif
+diff --git a/ruby/include/ruby_packer_winapi.h b/ruby/include/ruby_packer_winapi.h
+new file mode 100644
+index 00000000..8e9a91f7
+--- /dev/null
++++ b/ruby/include/ruby_packer_winapi.h
+@@ -0,0 +1,246 @@
++/*
++* Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++*                    Shengyuan Liu <sounder.liu@gmail.com>
++*
++* This file is part of libsquash, distributed under the MIT License
++* For full terms see the included LICENSE file
++*/
++
++#ifndef RUBY_PACKER_WINAPI_H_VD6Y96RT
++#define RUBY_PACKER_WINAPI_H_VD6Y96RT
++
++#ifndef STATUS_NO_MORE_FILES
++# define STATUS_NO_MORE_FILES ((NTSTATUS) 0x80000006L)
++#endif
++
++#ifndef STATUS_NOT_IMPLEMENTED
++# define STATUS_NOT_IMPLEMENTED ((NTSTATUS) 0xC0000002L)
++#endif
++
++#ifndef STATUS_SUCCESS
++# define STATUS_SUCCESS ((NTSTATUS) 0x00000000L)
++#endif
++
++typedef struct _IO_STATUS_BLOCK {
++	union {
++		NTSTATUS Status;
++		PVOID Pointer;
++	};
++	ULONG_PTR Information;
++} IO_STATUS_BLOCK, *PIO_STATUS_BLOCK;
++
++typedef VOID (NTAPI *PIO_APC_ROUTINE)
++             (PVOID ApcContext,
++              PIO_STATUS_BLOCK IoStatusBlock,
++              ULONG Reserved);
++
++typedef enum _FILE_INFORMATION_CLASS {
++	FileDirectoryInformation = 1,
++	FileFullDirectoryInformation,
++	FileBothDirectoryInformation,
++	FileBasicInformation,
++	FileStandardInformation,
++	FileInternalInformation,
++	FileEaInformation,
++	FileAccessInformation,
++	FileNameInformation,
++	FileRenameInformation,
++	FileLinkInformation,
++	FileNamesInformation,
++	FileDispositionInformation,
++	FilePositionInformation,
++	FileFullEaInformation,
++	FileModeInformation,
++	FileAlignmentInformation,
++	FileAllInformation,
++	FileAllocationInformation,
++	FileEndOfFileInformation,
++	FileAlternateNameInformation,
++	FileStreamInformation,
++	FilePipeInformation,
++	FilePipeLocalInformation,
++	FilePipeRemoteInformation,
++	FileMailslotQueryInformation,
++	FileMailslotSetInformation,
++	FileCompressionInformation,
++	FileObjectIdInformation,
++	FileCompletionInformation,
++	FileMoveClusterInformation,
++	FileQuotaInformation,
++	FileReparsePointInformation,
++	FileNetworkOpenInformation,
++	FileAttributeTagInformation,
++	FileTrackingInformation,
++	FileIdBothDirectoryInformation,
++	FileIdFullDirectoryInformation,
++	FileValidDataLengthInformation,
++	FileShortNameInformation,
++	FileIoCompletionNotificationInformation,
++	FileIoStatusBlockRangeInformation,
++	FileIoPriorityHintInformation,
++	FileSfioReserveInformation,
++	FileSfioVolumeInformation,
++	FileHardLinkInformation,
++	FileProcessIdsUsingFileInformation,
++	FileNormalizedNameInformation,
++	FileNetworkPhysicalNameInformation,
++	FileIdGlobalTxDirectoryInformation,
++	FileIsRemoteDeviceInformation,
++	FileAttributeCacheInformation,
++	FileNumaNodeInformation,
++	FileStandardLinkInformation,
++	FileRemoteProtocolInformation,
++	FileMaximumInformation
++} FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
++
++/* from winternl.h */
++typedef struct _UNICODE_STRING {
++	USHORT Length;
++	USHORT MaximumLength;
++	PWSTR  Buffer;
++} UNICODE_STRING, *PUNICODE_STRING;
++
++typedef NTSTATUS(NTAPI *sNtQueryDirectoryFile)
++(HANDLE FileHandle,
++	HANDLE Event,
++	PIO_APC_ROUTINE ApcRoutine,
++	PVOID ApcContext,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FileInformation,
++	ULONG Length,
++	FILE_INFORMATION_CLASS FileInformationClass,
++	BOOLEAN ReturnSingleEntry,
++	PUNICODE_STRING FileName,
++	BOOLEAN RestartScan
++	);
++
++typedef struct _FILE_DIRECTORY_INFORMATION {
++	ULONG NextEntryOffset;
++	ULONG FileIndex;
++	LARGE_INTEGER CreationTime;
++	LARGE_INTEGER LastAccessTime;
++	LARGE_INTEGER LastWriteTime;
++	LARGE_INTEGER ChangeTime;
++	LARGE_INTEGER EndOfFile;
++	LARGE_INTEGER AllocationSize;
++	ULONG FileAttributes;
++	ULONG FileNameLength;
++	WCHAR FileName[1];
++} FILE_DIRECTORY_INFORMATION, *PFILE_DIRECTORY_INFORMATION;
++
++typedef NTSTATUS(NTAPI *sNtQueryInformationFile)
++(HANDLE FileHandle,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FileInformation,
++	ULONG Length,
++	FILE_INFORMATION_CLASS FileInformationClass);
++
++typedef enum _FS_INFORMATION_CLASS {
++	FileFsVolumeInformation = 1,
++	FileFsLabelInformation = 2,
++	FileFsSizeInformation = 3,
++	FileFsDeviceInformation = 4,
++	FileFsAttributeInformation = 5,
++	FileFsControlInformation = 6,
++	FileFsFullSizeInformation = 7,
++	FileFsObjectIdInformation = 8,
++	FileFsDriverPathInformation = 9,
++	FileFsVolumeFlagsInformation = 10,
++	FileFsSectorSizeInformation = 11
++} FS_INFORMATION_CLASS, *PFS_INFORMATION_CLASS;
++
++typedef NTSTATUS(NTAPI *sNtQueryVolumeInformationFile)
++(HANDLE FileHandle,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FsInformation,
++	ULONG Length,
++	FS_INFORMATION_CLASS FsInformationClass);
++
++typedef struct _FILE_BASIC_INFORMATION {
++	LARGE_INTEGER CreationTime;
++	LARGE_INTEGER LastAccessTime;
++	LARGE_INTEGER LastWriteTime;
++	LARGE_INTEGER ChangeTime;
++	DWORD FileAttributes;
++} FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
++
++typedef struct _FILE_STANDARD_INFORMATION {
++	LARGE_INTEGER AllocationSize;
++	LARGE_INTEGER EndOfFile;
++	ULONG         NumberOfLinks;
++	BOOLEAN       DeletePending;
++	BOOLEAN       Directory;
++} FILE_STANDARD_INFORMATION, *PFILE_STANDARD_INFORMATION;
++
++typedef struct _FILE_INTERNAL_INFORMATION {
++	LARGE_INTEGER IndexNumber;
++} FILE_INTERNAL_INFORMATION, *PFILE_INTERNAL_INFORMATION;
++
++typedef struct _FILE_EA_INFORMATION {
++	ULONG EaSize;
++} FILE_EA_INFORMATION, *PFILE_EA_INFORMATION;
++
++typedef struct _FILE_ACCESS_INFORMATION {
++	ACCESS_MASK AccessFlags;
++} FILE_ACCESS_INFORMATION, *PFILE_ACCESS_INFORMATION;
++
++typedef struct _FILE_POSITION_INFORMATION {
++	LARGE_INTEGER CurrentByteOffset;
++} FILE_POSITION_INFORMATION, *PFILE_POSITION_INFORMATION;
++
++typedef struct _FILE_MODE_INFORMATION {
++	ULONG Mode;
++} FILE_MODE_INFORMATION, *PFILE_MODE_INFORMATION;
++
++typedef struct _FILE_ALIGNMENT_INFORMATION {
++	ULONG AlignmentRequirement;
++} FILE_ALIGNMENT_INFORMATION, *PFILE_ALIGNMENT_INFORMATION;
++
++typedef struct _FILE_NAME_INFORMATION {
++	ULONG FileNameLength;
++	WCHAR FileName[1];
++} FILE_NAME_INFORMATION, *PFILE_NAME_INFORMATION;
++
++typedef struct _FILE_ALL_INFORMATION {
++	FILE_BASIC_INFORMATION     BasicInformation;
++	FILE_STANDARD_INFORMATION  StandardInformation;
++	FILE_INTERNAL_INFORMATION  InternalInformation;
++	FILE_EA_INFORMATION        EaInformation;
++	FILE_ACCESS_INFORMATION    AccessInformation;
++	FILE_POSITION_INFORMATION  PositionInformation;
++	FILE_MODE_INFORMATION      ModeInformation;
++	FILE_ALIGNMENT_INFORMATION AlignmentInformation;
++	FILE_NAME_INFORMATION      NameInformation;
++} FILE_ALL_INFORMATION, *PFILE_ALL_INFORMATION;
++
++extern sNtQueryDirectoryFile pNtQueryDirectoryFile;
++extern sNtQueryInformationFile pNtQueryInformationFile;
++extern sNtQueryVolumeInformationFile pNtQueryVolumeInformationFile;
++
++typedef struct _REPARSE_DATA_BUFFER {
++        ULONG  ReparseTag;
++        USHORT ReparseDataLength;
++        USHORT Reserved;
++        union {
++                struct {
++                        USHORT SubstituteNameOffset;
++                        USHORT SubstituteNameLength;
++                        USHORT PrintNameOffset;
++                        USHORT PrintNameLength;
++                        ULONG Flags;
++                        WCHAR PathBuffer[1];
++                } SymbolicLinkReparseBuffer;
++                struct {
++                        USHORT SubstituteNameOffset;
++                        USHORT SubstituteNameLength;
++                        USHORT PrintNameOffset;
++                        USHORT PrintNameLength;
++                        WCHAR PathBuffer[1];
++                } MountPointReparseBuffer;
++                struct {
++                        UCHAR  DataBuffer[1];
++                } GenericReparseBuffer;
++        };
++} REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
++
++#endif
+diff --git a/ruby/ruby_packer_memfs.c b/ruby/ruby_packer_memfs.c
+new file mode 100644
+index 00000000..cfaf529e
+--- /dev/null
++++ b/ruby/ruby_packer_memfs.c
+@@ -0,0 +1,55 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#include <stdint.h>
++#include <stddef.h>
++
++const uint8_t ruby_packer_memfs[4096] = { 104
++,115,113,115,21,0,0,0,182,118,124,88,0,0,2,0,1,0,0,0,1,0,17,0,192,0,1,0,4,0,0,0,136,2,0,0,0,0,0,0,128,6,0,0,0,0,0,0,120,6,0,0,0,0,0,0,255,255,255,255,255,255,255,255,218,3,0,0,0,0,0,0,11,5,0,0,0,0,0,0,31,6,0,0,0,0,0,0,106,6,0,0,0,0,0,0,120,218,133,84,75,111
++,227,54,16,62,71,191,98,144,75,19,212,49,108,55,217,118,219,83,30,219,194,192,166,27,192,105,123,48,124,24,75,99,139,49,197,209,146,35,59,250,247,157,161,156,174,177,221,162,128,14,146,72,14,191,215,204,29,75,228,68,61,194,125,221,197,178,134,53,55,107,23,182,69,241,41,192,116,10,15,84,82,179,166,8,179,201,244,221,8,16,82,231,74,87,81,222,167,191,119,206,123
++,170,0,5,60,97,18,152,221,64,75,220,122,2,12,21,184,240,210,69,93,190,126,15,44,53,197,100,27,23,50,134,39,18,61,108,91,242,23,118,254,187,244,134,224,162,228,166,225,224,123,216,5,62,4,192,4,31,252,213,221,87,64,151,63,172,46,13,79,89,99,75,30,2,189,10,8,195,2,93,16,120,196,184,179,130,220,138,43,225,83,148,154,43,126,133,123,84,16,85,68,63
++,130,68,138,132,55,160,63,254,181,237,137,91,26,41,118,221,239,34,107,157,219,245,26,147,67,168,92,146,232,74,69,252,97,219,183,162,43,79,145,146,170,17,100,164,155,42,197,241,43,138,96,13,228,175,22,46,185,17,112,128,71,14,21,246,144,183,185,141,83,57,236,210,163,126,74,110,54,187,234,9,227,21,251,74,129,215,13,119,170,74,141,27,247,89,143,214,216,52,122,226,177
++,75,130,27,28,193,161,102,168,177,130,3,199,112,226,198,158,146,162,58,222,10,145,90,142,146,47,82,150,82,71,34,104,40,100,189,81,143,54,24,180,200,94,65,144,253,141,74,194,118,43,227,146,67,160,82,156,194,62,56,169,51,82,99,84,238,126,1,57,240,63,46,70,59,171,49,129,196,221,182,214,171,231,139,249,2,74,143,206,208,106,189,150,67,114,107,231,157,244,176,225,120
++,82,104,188,188,94,45,111,86,240,92,187,4,250,216,202,198,69,205,142,232,225,252,89,14,65,168,85,156,140,48,107,85,141,151,239,86,69,145,61,25,12,233,241,174,147,216,217,203,248,165,221,22,199,252,168,171,139,197,105,196,44,94,70,78,35,60,41,62,114,137,198,239,44,215,80,87,71,131,205,163,193,211,226,1,133,206,190,14,126,49,157,252,60,153,192,197,31,207,247,223,79
++,102,250,122,89,220,102,50,32,125,75,197,221,177,103,254,34,52,222,103,167,174,20,15,154,180,58,157,205,110,138,223,57,92,109,80,208,15,125,225,40,21,215,239,139,39,138,45,73,68,225,152,206,254,199,255,98,158,60,54,154,213,133,40,76,99,58,143,248,57,147,52,221,62,210,30,53,253,23,71,31,46,151,211,213,114,166,154,21,34,82,124,59,159,118,44,19,119,154,137,147,52
++,39,116,21,156,255,169,60,184,83,143,40,70,142,46,53,102,216,96,252,1,183,214,247,91,237,55,179,206,92,227,46,72,236,143,125,151,50,42,197,237,93,147,142,13,163,153,242,30,168,161,184,37,208,86,226,176,61,90,212,176,38,170,11,206,98,184,137,220,104,65,189,41,57,233,178,89,227,115,200,193,70,159,24,42,82,126,54,85,16,66,94,85,65,91,138,142,43,19,68,229,139
++,193,0,14,169,179,232,107,247,165,241,114,106,233,177,214,134,103,60,96,165,195,4,230,243,255,26,1,95,162,116,235,233,85,17,70,109,255,33,235,54,101,106,210,59,49,244,58,70,74,193,104,218,109,108,48,88,223,148,216,37,5,183,238,79,50,111,122,246,6,202,9,156,43,177,192,2,47,106,41,228,153,162,115,83,101,120,235,146,183,57,220,125,115,85,251,95,103,107,56,170,178
++,156,254,184,250,66,167,212,35,169,214,206,7,19,79,39,85,107,88,127,83,9,202,97,28,107,167,187,253,208,232,57,243,195,124,160,61,153,96,170,208,79,170,16,218,12,16,117,85,47,109,176,202,33,107,72,50,223,10,50,53,195,82,50,239,6,149,217,234,141,139,191,1,189,36,47,247,47,1,120,218,99,98,88,194,200,0,4,95,20,131,34,152,24,80,193,51,102,6,6,102,134
++,255,96,121,203,178,154,8,22,32,13,226,176,3,113,126,81,102,90,102,78,42,178,52,43,84,154,13,136,115,82,203,82,115,12,145,101,217,208,101,141,152,160,86,135,26,149,69,176,163,89,11,178,10,89,55,7,84,55,80,138,161,56,199,24,89,138,19,69,10,197,78,46,20,41,35,70,134,183,96,169,169,166,101,17,204,80,203,64,126,206,132,42,131,57,200,89,43,40,130,23,201
++,65,175,128,138,213,153,64,106,254,130,229,95,0,229,121,144,244,203,51,164,49,112,51,32,228,229,85,130,34,248,144,228,153,25,154,192,242,48,243,23,2,245,11,34,153,47,8,12,19,11,52,15,11,67,221,36,13,196,122,122,250,80,100,0,132,38,14,197,249,185,169,37,25,153,121,233,38,250,48,43,31,3,141,20,66,178,82,1,104,165,0,146,147,246,1,229,5,160,242,32,175
++,27,48,204,103,224,71,146,15,0,202,243,35,201,75,49,156,1,59,25,217,73,34,80,39,129,156,142,225,18,152,65,213,192,176,229,134,26,4,74,16,33,12,143,193,154,96,242,125,64,131,24,161,242,160,72,54,99,48,97,20,69,147,23,69,114,136,54,67,58,163,24,144,6,0,60,185,85,104,1,1,120,218,69,79,91,78,194,64,20,189,119,10,21,34,38,24,22,32,11,32,132
++,66,255,229,199,196,15,183,96,38,45,29,202,36,243,64,90,76,140,91,112,7,238,195,95,215,224,10,220,128,123,208,211,151,157,201,201,61,247,220,119,72,205,27,0,115,32,160,33,25,245,172,76,116,75,220,123,235,71,18,189,183,121,5,23,20,146,63,233,189,54,234,29,229,149,80,152,232,3,57,13,93,127,33,161,161,155,118,8,93,1,19,38,136,23,116,151,191,28,75,157,184
++,46,54,3,222,184,218,96,68,133,183,170,60,104,151,115,27,188,6,76,93,56,160,36,245,231,242,147,25,251,93,146,243,153,146,214,103,103,163,138,174,211,20,248,70,50,35,253,152,184,160,149,39,192,162,150,167,180,92,225,199,219,255,57,241,3,139,250,222,101,170,221,47,7,224,67,218,90,237,158,244,141,24,65,31,247,59,197,162,109,216,219,144,82,111,81,153,255,16,215,109,50
++,125,90,221,139,113,199,163,110,181,234,158,131,168,236,140,164,84,110,103,124,161,164,246,210,42,187,47,164,252,3,179,248,65,197,15,0,120,218,75,96,128,128,42,102,8,13,0,9,245,0,222,14,6,0,0,0,0,0,0,65,0,120,218,203,96,98,64,1,111,160,180,2,148,182,135,210,177,80,186,26,74,207,134,210,219,160,244,69,40,237,1,53,79,135,17,66,243,64,105,31,40
++,253,31,74,223,135,210,57,80,122,63,148,238,129,210,242,80,115,58,160,52,0,39,61,9,198,39,6,0,0,0,0,0,0,4,128,232,3,0,0,114,6,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
++};
++
+diff --git a/ruby/ruby_packer_unix.c b/ruby/ruby_packer_unix.c
+new file mode 100644
+index 00000000..7c3b2e2f
+--- /dev/null
++++ b/ruby/ruby_packer_unix.c
+@@ -0,0 +1,1124 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#include "ruby_packer_common.h"
++
++#ifdef _WIN32
++#define MAXPATHLEN 4096
++#define mode_t unsigned int
++#endif
++
++sqfs *ruby_packer_fs;
++sqfs_path ruby_packer_cwd; /* must end with a slash */
++SQUASH_OS_PATH generic_mkdir_workdir = NULL;
++char *mkdir_workdir = NULL; /* must NOT end with a slash */
++char *ruby_packer_mkdir_scope = "/__ruby_packer_memfs__"; /* must NOT end with a slash */
++
++
++#ifdef _WIN32
++#include <shellapi.h>
++static void mkdir_workdir_halt_rm(const wchar_t *sPath)
++{
++	SHFILEOPSTRUCTW fileop;
++	size_t len = wcslen(sPath);
++	wchar_t pFrom[MAX_PATH * 2];
++
++	if (len > MAX_PATH) {
++		return;
++	}
++	wcscpy(pFrom, sPath);
++	pFrom[len] = 0;
++	pFrom[len + 1] = 0;
++
++	fileop.hwnd = NULL;
++	fileop.wFunc = FO_DELETE;
++	fileop.pFrom = pFrom;
++	fileop.pTo = NULL;
++	fileop.fFlags = FOF_NOCONFIRMATION | FOF_SILENT;
++	fileop.fAnyOperationsAborted = FALSE;
++	fileop.lpszProgressTitle = NULL;
++	fileop.hNameMappings = NULL;
++
++	SHFileOperationW(&fileop);
++}
++#else
++static int mkdir_workdir_halt_rm(const char *arg1, const struct stat *ptr, int flag, struct FTW *ftwarg)
++{
++	if (FTW_D == flag || FTW_DNR == flag || FTW_DP == flag) {
++		rmdir(arg1);
++	} else {
++		unlink(arg1);
++	}
++}
++#endif
++
++static void mkdir_workdir_halt()
++{
++#ifdef _WIN32
++	mkdir_workdir_halt_rm(generic_mkdir_workdir);
++#else
++	nftw(mkdir_workdir, mkdir_workdir_halt_rm, 20, FTW_PHYS | FTW_MOUNT | FTW_DEPTH);
++#endif
++}
++
++static char * ruby_packer_mkdir_workdir()
++{
++	if (NULL == mkdir_workdir) {
++		MUTEX_LOCK(&squash_global_mutex);
++		if (NULL == mkdir_workdir) {
++			generic_mkdir_workdir = squash_tmpf(squash_tmpdir(), NULL);
++			if (NULL == generic_mkdir_workdir) {
++				mkdir_workdir = NULL;
++				return NULL;
++			}
++#ifdef _WIN32
++			mkdir_workdir = malloc(MAX_PATH * 3);
++			if (NULL == mkdir_workdir) {
++				mkdir_workdir = NULL;
++				free(generic_mkdir_workdir);
++				generic_mkdir_workdir = NULL;
++				return NULL;
++			}
++			if ((size_t)-1 == wcstombs(mkdir_workdir, generic_mkdir_workdir, MAX_PATH)) {
++				free(mkdir_workdir);
++				mkdir_workdir = NULL;
++				free(generic_mkdir_workdir);
++				generic_mkdir_workdir = NULL;
++				return -1;
++			}
++			if (mkdir(mkdir_workdir)) {
++				free(mkdir_workdir);
++				mkdir_workdir = NULL;
++				free(generic_mkdir_workdir);
++				generic_mkdir_workdir = NULL;
++				return NULL;
++			}
++			if (atexit(mkdir_workdir_halt)) {
++				free(mkdir_workdir);
++				mkdir_workdir = NULL;
++				free(generic_mkdir_workdir);
++				generic_mkdir_workdir = NULL;
++				return NULL;
++			}
++#else
++			mkdir_workdir = generic_mkdir_workdir;
++			if (mkdir(mkdir_workdir, S_IRWXU)) {
++				mkdir_workdir = NULL;
++				free(generic_mkdir_workdir);
++				generic_mkdir_workdir = NULL;
++				return NULL;
++			}
++			if (atexit(mkdir_workdir_halt)) {
++				mkdir_workdir = NULL;
++				free(generic_mkdir_workdir);
++				generic_mkdir_workdir = NULL;
++				return NULL;
++			}
++#endif
++		}
++		MUTEX_UNLOCK(&squash_global_mutex);
++	}
++	return mkdir_workdir;
++}
++
++static int ruby_packer_mkdir_consult(char *path, mode_t mode) {
++	int ret;
++	char *head = NULL;
++	char *p = NULL;
++	char *p_left = NULL;
++	struct stat buf;
++	char *path2;
++
++	while (strlen(path) - 1 >= 0 && '/' == path[strlen(path) - 1]) {
++		path[strlen(path) - 1] = 0;
++	}
++
++	head = strstr(path, ruby_packer_mkdir_scope);
++	if (NULL == head || '/' != head[strlen(ruby_packer_mkdir_scope)]) {
++		errno = ENOENT;
++		return -1;
++	}
++
++	for (p = head + strlen(ruby_packer_mkdir_scope) + 1; *p; p++) {
++		if (*p == '/') {
++			*p = 0;
++			if (0 == squash_stat(ruby_packer_fs, head, &buf) && S_ISDIR(buf.st_mode)) {
++				path2 = strdup(path);
++				if (NULL == path2) {
++					return -1;
++				} else {
++					memmove(
++						path2 + (head-path),
++						path2 + (head-path) + strlen(ruby_packer_mkdir_scope),
++						strlen(path2 + (head-path) + strlen(ruby_packer_mkdir_scope)) + 1
++					);
++#ifdef _WIN32
++					mkdir(path2);
++#else
++					mkdir(path2, mode);
++#endif
++					free(path2);
++				}
++				*p = '/';
++			} else {
++				*p = '/';
++				break;
++			}
++		}
++	}
++	memmove(
++		head,
++		head + strlen(ruby_packer_mkdir_scope),
++		strlen(head + strlen(ruby_packer_mkdir_scope)) + 1
++	);
++#ifdef _WIN32
++	return mkdir(path);
++#else
++	return mkdir(path, mode);
++#endif
++}
++
++int ruby_packer_mkdir(const char *path, mode_t mode)
++{
++	if (ruby_packer_cwd[0] && '/' != *path) {
++		struct stat buf;
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		int ret;
++		int ret_inner;
++		const char* workdir;
++		const char* workdir_path;
++
++		RUBY_PACKER_GEN_EXPANDED_NAME(path);
++		ret = squash_stat(ruby_packer_fs, ruby_packer_expanded, &buf);
++		workdir = ruby_packer_mkdir_workdir();
++		if (NULL == workdir) {
++			errno = ENOENT;
++			return -1;
++		}
++		workdir_path = malloc(strlen(workdir) + strlen(ruby_packer_expanded) + 1);
++		if (NULL == workdir_path) {
++			errno = ENOMEM;
++			return -1;
++		}
++		strcpy(workdir_path, workdir);
++		strcat(workdir_path, ruby_packer_expanded);
++		ret_inner = ruby_packer_mkdir_consult(workdir_path, mode);
++		free(workdir_path);
++		if (0 == ret) {
++			errno = EEXIST;
++			return -1;
++		} else {
++			return ret_inner;
++		}
++	} else if (ruby_packer_is_path(path)) {
++		struct stat buf;
++		int ret;
++		int ret_inner;
++		const char* workdir;
++		const char* workdir_path;
++
++		ret = squash_stat(ruby_packer_fs, path, &buf);
++		workdir = ruby_packer_mkdir_workdir();
++		if (NULL == workdir) {
++			errno = ENOENT;
++			return -1;
++		}
++		workdir_path = malloc(strlen(workdir) + strlen(path) + 1);
++		if (NULL == workdir_path) {
++			errno = ENOMEM;
++			return -1;
++		}
++		strcpy(workdir_path, workdir);
++		strcat(workdir_path, path);
++		ret_inner = ruby_packer_mkdir_consult(workdir_path, mode);
++		free(workdir_path);
++		if (0 == ret) {
++			errno = EEXIST;
++			return -1;
++		} else {
++			return ret_inner;
++		}
++	} else {
++		return mkdir(path, mode);
++	}
++}
++
++#ifdef _WIN32
++int ruby_packer__wmkdir(wchar_t* pathname)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(pathname)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(pathname);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++		return ruby_packer_dos_return(ruby_packer_mkdir(ruby_packer_expanded, 0777));
++	} else if (ruby_packer_is_path_w(pathname)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(pathname);
++		return ruby_packer_dos_return(ruby_packer_mkdir(ruby_packer_converted, 0777));
++	} else {
++		return _wmkdir(pathname);
++	}
++}
++#else
++int ruby_packer_lstat(const char *path, struct stat *buf)
++{
++	if (ruby_packer_cwd[0] && '/' != *path) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(path);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			squash_lstat(ruby_packer_fs, ruby_packer_expanded, buf),
++			lstat(mkdir_workdir_expanded, buf)
++		);
++	} else if (ruby_packer_is_path(path)) {
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			path,
++			squash_lstat(ruby_packer_fs, path, buf),
++			lstat(mkdir_workdir_expanded, buf)
++		);
++	} else {
++		return lstat(path, buf);
++	}
++}
++
++ssize_t ruby_packer_readlink(const char *path, char *buf, size_t bufsize)
++{
++	if (ruby_packer_cwd[0] && '/' != *path) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(path);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			squash_readlink(ruby_packer_fs, ruby_packer_expanded, buf, bufsize),
++			readlink(mkdir_workdir_expanded, buf, bufsize)
++		);
++	}
++	else if (ruby_packer_is_path(path)) {
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			path,
++			squash_readlink(ruby_packer_fs, path, buf, bufsize),
++			readlink(mkdir_workdir_expanded, buf, bufsize)
++		);
++	}
++	else {
++		return readlink(path, buf, bufsize);
++	}
++}
++
++DIR * ruby_packer_opendir(const char *filename)
++{
++	if (ruby_packer_cwd[0] && '/' != *filename) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(filename);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			(DIR *)squash_opendir(ruby_packer_fs, ruby_packer_expanded),
++			opendir(mkdir_workdir_expanded)
++		);
++	}
++	else if (ruby_packer_is_path(filename)) {
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			filename,
++			(DIR *)squash_opendir(ruby_packer_fs, filename),
++			opendir(mkdir_workdir_expanded)
++		);
++	}
++	else {
++		return opendir(filename);
++	}
++}
++
++DIR * ruby_packer_fdopendir(int fd)
++{
++	sqfs_err error;
++	short found;
++	SQUASH_DIR *dir;
++	int *handle;
++	struct squash_file *file;
++	sqfs *fs;
++
++	if (!SQUASH_VALID_VFD(fd))
++	{
++		return fdopendir(fd);
++	}
++
++	file = squash_global_fdtable.fds[fd];
++
++	dir = calloc(1, sizeof(SQUASH_DIR));
++
++	if (NULL == dir)
++	{
++		errno = ENOMEM;
++		return NULL;
++	}
++
++	fs = file->fs;
++
++	dir->fs = fs;
++	dir->entries = NULL;
++	dir->nr = 0;
++	dir->filename = strdup(file->filename);
++	dir->fd = fd;
++
++	handle = (int *)(squash_global_fdtable.fds[dir->fd]->payload);
++
++	MUTEX_LOCK(&squash_global_mutex);
++	free(handle);
++	squash_global_fdtable.fds[dir->fd]->payload = (void *)dir;
++	MUTEX_UNLOCK(&squash_global_mutex);
++
++	dir->actual_nr = 0;
++	dir->loc = 0;
++	error = sqfs_inode_get(fs, &dir->node, sqfs_inode_root(fs));
++	if (SQFS_OK != error)
++	{
++		goto failure;
++	}
++	error = sqfs_lookup_path_inner(fs, &dir->node, dir->filename, &found, 1);
++	if (SQFS_OK != error)
++	{
++		goto failure;
++	}
++	if (!found)
++	{
++		errno = ENOENT;
++		goto failure;
++	}
++	error = sqfs_dir_open(fs, &dir->node, &dir->dir, 0);
++	if (SQFS_OK != error)
++	{
++		goto failure;
++	}
++	return dir;
++failure:
++	if (!errno) {
++		errno = ENOENT;
++	}
++	free(dir);
++	return NULL;
++}
++
++int ruby_packer_closedir(DIR *dirp)
++{
++	if (squash_find_entry(dirp)) {
++		return squash_closedir((SQUASH_DIR *)dirp);
++	}
++	else {
++		return closedir(dirp);
++	}
++}
++
++struct SQUASH_DIRENT * ruby_packer_readdir(DIR *dirp)
++{
++	if (squash_find_entry(dirp)) {
++		return squash_readdir((SQUASH_DIR *)dirp);
++	}
++	else {
++		return readdir(dirp);
++	}
++}
++
++long ruby_packer_telldir(DIR *dirp)
++{
++	if (squash_find_entry(dirp)) {
++		return squash_telldir((SQUASH_DIR *)dirp);
++	}
++	else {
++		return telldir(dirp);
++	}
++}
++
++void ruby_packer_seekdir(DIR *dirp, long loc)
++{
++	if (squash_find_entry(dirp)) {
++		return squash_seekdir((SQUASH_DIR *)dirp, loc);
++	}
++	else {
++		return seekdir(dirp, loc);
++	}
++}
++
++void ruby_packer_rewinddir(DIR *dirp)
++{
++	if (squash_find_entry(dirp)) {
++		return squash_rewinddir((SQUASH_DIR *)dirp);
++	}
++	else {
++		return rewinddir(dirp);
++	}
++}
++
++int ruby_packer_dirfd(DIR *dirp)
++{
++	if (squash_find_entry(dirp)) {
++		return squash_dirfd((SQUASH_DIR *)dirp);
++	}
++	else {
++		return dirfd(dirp);
++	}
++}
++
++int ruby_packer_scandir(const char *dirname, struct SQUASH_DIRENT ***namelist,
++	int(*select)(const struct SQUASH_DIRENT *),
++	int(*compar)(const struct SQUASH_DIRENT **, const struct SQUASH_DIRENT **))
++{
++	if (ruby_packer_cwd[0] && '/' != *dirname) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(dirname);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			squash_scandir(ruby_packer_fs, ruby_packer_expanded, namelist, select, compar),
++			scandir(mkdir_workdir_expanded, namelist, select, compar)
++		);
++	}
++	else if (ruby_packer_is_path(dirname)) {
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			dirname,
++			squash_scandir(ruby_packer_fs, dirname, namelist, select, compar),
++			scandir(mkdir_workdir_expanded, namelist, select, compar)
++		);
++	}
++	else {
++		return scandir(dirname, namelist, select, compar);
++	}
++}
++
++ssize_t ruby_packer_pread(int d, void *buf, size_t nbyte, off_t offset)
++{
++	if (SQUASH_VALID_VFD(d)) {
++		off_t lseek_off, backup_off;
++		ssize_t read_ssize;
++		backup_off = squash_lseek(d, 0, SQUASH_SEEK_CUR);
++		if (-1 == backup_off) {
++			return -1;
++		}
++		lseek_off = squash_lseek(d, offset, SQUASH_SEEK_SET);
++		if (-1 == lseek_off) {
++			return -1;
++		}
++		read_ssize = squash_read(d, buf, nbyte);
++		if (-1 == read_ssize) {
++			return -1;
++		}
++		lseek_off = squash_lseek(d, backup_off, SQUASH_SEEK_SET);
++		assert(backup_off == lseek_off);
++		return read_ssize;
++	} else {
++		return pread(d, buf, nbyte, offset);
++	}
++}
++
++ssize_t ruby_packer_readv(int d, const struct iovec *iov, int iovcnt)
++{
++	if (SQUASH_VALID_VFD(d)) {
++		int i;
++		ssize_t i_ssize;
++		ssize_t ret = 0;
++		for (i = 0; i < iovcnt; ++i) {
++			i_ssize = squash_read(d, iov[i].iov_base, iov[i].iov_len);
++			if (-1 == i_ssize) {
++				return -1;
++			} else if (0 == i_ssize) {
++				break;
++			} else {
++				ret += i_ssize;
++			}
++		}
++		return ret;
++	} else {
++		return readv(d, iov, iovcnt);
++	}
++}
++
++void* ruby_packer_dlopen(const char* path, int mode)
++{
++    return dlopen(ruby_packer_ifextract(path, NULL), mode);
++}
++
++int ruby_packer_access(const char *path, int mode)
++{
++	if (ruby_packer_cwd[0] && '/' != *path) {
++		struct stat buf;
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(path);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			squash_stat(ruby_packer_fs, ruby_packer_expanded, &buf),
++			access(mkdir_workdir_expanded, &buf)
++		);
++	} else if (ruby_packer_is_path(path)) {
++		struct stat buf;
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			path,
++			squash_stat(ruby_packer_fs, path, &buf),
++			access(mkdir_workdir_expanded, &buf)
++		);
++	} else {
++		return access(path, mode);
++	}
++}
++
++#endif // !_WIN32
++
++int ruby_packer_dos_return(int statement) {
++#ifdef _WIN32
++	int ret = (statement);
++	if (-1 == ret) {
++		RUBY_PACKER_SET_LAST_ERROR;
++		return ret;
++	} else {
++		return ret;
++	}
++#else
++	return (statement);
++#endif // _WIN32
++}
++
++short ruby_packer_if(const char* path)
++{
++	if (ruby_packer_cwd[0] && '/' != *path) {
++		return 1;
++	} else if (ruby_packer_is_path(path)) {
++		return 1;
++	} else {
++		return 0;
++	}
++}
++
++SQUASH_OS_PATH ruby_packer_ifextract(const char* path, const char* ext_name)
++{
++    if (ruby_packer_cwd[0] && '/' != *path) {
++        sqfs_path ruby_packer_expanded;
++        size_t ruby_packer_cwd_len;
++        size_t memcpy_len;
++        RUBY_PACKER_GEN_EXPANDED_NAME(path);
++        return squash_extract(ruby_packer_fs, ruby_packer_expanded, ext_name);
++    }
++    else if (ruby_packer_is_path(path)) {
++        return squash_extract(ruby_packer_fs, path, ext_name);
++    }
++    else {
++        return path;
++    }
++}
++
++void ruby_packer_chdir_helper(const char *path)
++{
++        size_t memcpy_len = strlen(path);
++        if (SQUASHFS_PATH_LEN - 1 < memcpy_len) {
++        	memcpy_len = SQUASHFS_PATH_LEN - 1;
++        }
++        memcpy(ruby_packer_cwd, path, memcpy_len);
++        while ('/' == ruby_packer_cwd[memcpy_len - 1]) {
++        	memcpy_len--;
++        }
++        ruby_packer_cwd[memcpy_len] = '/';
++        ruby_packer_cwd[memcpy_len + 1] = '\0';
++}
++
++int ruby_packer_chdir(const char *path)
++{
++	if (ruby_packer_is_path(path)) {
++		if (mkdir_workdir) {
++			sqfs_path mkdir_workdir_expanded;
++			char *mkdir_workdir_expanded_head;
++			size_t mkdir_workdir_len;
++			size_t memcpy_len;
++			struct stat mkdir_workdir_buf;
++			mkdir_workdir_len = strlen(mkdir_workdir);
++			memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++			memcpy_len = strlen(path);
++			if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++				memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++			}
++			memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], (path), memcpy_len);
++			mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++			mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++			if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++				memmove(
++					mkdir_workdir_expanded_head,
++					mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++					strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++				);
++				if (0 == stat(mkdir_workdir_expanded, &mkdir_workdir_buf)) {
++					int ret = chdir(mkdir_workdir_expanded);
++					if (0 == ret) {
++						ruby_packer_chdir_helper(path);
++					}
++					return ret;
++				}
++			}
++		}
++
++		struct stat st;
++		int ret;
++
++		ret = squash_stat(ruby_packer_fs, path, &st);
++		if (-1 == ret) {
++			#ifdef _WIN32
++			RUBY_PACKER_SET_LAST_ERROR;
++			#endif
++			return -1;
++		}
++		if (S_ISDIR(st.st_mode)) {
++			ruby_packer_chdir_helper(path);
++			return 0;
++		} else {
++			errno = ENOENT;
++			#ifdef _WIN32
++			RUBY_PACKER_SET_LAST_ERROR;
++			#endif
++			return -1;
++		}
++	} else {
++		int ret;
++
++		ret = chdir(path);
++		if (0 == ret) {
++			ruby_packer_cwd[0] = '\0';
++		}
++		return ret;
++	}
++}
++
++char *ruby_packer_getcwd(char *buf, size_t size)
++{
++	if (ruby_packer_cwd[0]) {
++		size_t memcpy_len = strlen(ruby_packer_cwd);
++		if (NULL == buf) {
++			buf = malloc((memcpy_len + 1) * sizeof(char));
++			if (NULL == buf) {
++				errno = ENOMEM;
++				#ifdef _WIN32
++				RUBY_PACKER_SET_LAST_ERROR;
++				#endif
++				return NULL;
++			}
++		} else {
++			if (size - 1 < memcpy_len) {
++				memcpy_len = size - 1;
++			}
++		}
++		memcpy(buf, ruby_packer_cwd, memcpy_len);
++		assert(memcpy_len - 1 >= 0);
++		buf[memcpy_len - 1] = '\0';
++		return buf;
++	} else {
++		return getcwd(buf, size);
++	}
++}
++
++char *ruby_packer_getwd(char *buf)
++{
++	return ruby_packer_getcwd(buf, MAXPATHLEN);
++}
++
++#ifdef _WIN32
++BOOL
++RubyPackerSetCurrentDirectoryW(
++	LPCWSTR lpPathName
++)
++{
++	if (ruby_packer_is_path_w(lpPathName)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++		int ret;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpPathName);
++
++		if (mkdir_workdir) {
++			sqfs_path mkdir_workdir_expanded;
++			char *mkdir_workdir_expanded_head;
++			size_t mkdir_workdir_len;
++			size_t memcpy_len;
++			struct stat mkdir_workdir_buf;
++			mkdir_workdir_len = strlen(mkdir_workdir);
++			memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++			memcpy_len = strlen(ruby_packer_converted);
++			if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++				memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++			}
++			memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], (ruby_packer_converted), memcpy_len);
++			mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++			mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++			if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++				memmove(
++					mkdir_workdir_expanded_head,
++					mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++					strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++				);
++				if (0 == stat(mkdir_workdir_expanded, &mkdir_workdir_buf)) {
++					BOOL ret = SetCurrentDirectory(mkdir_workdir_expanded);
++					if (ret) {
++						ruby_packer_chdir_helper(ruby_packer_converted);
++					}
++					return ret;
++				}
++			}
++		}
++
++		ret = ruby_packer_chdir(ruby_packer_converted);
++		if (0 == ret) {
++			return 1;
++		} else {
++			return 0;
++		}
++	} else {
++		BOOL ret = SetCurrentDirectoryW(lpPathName);
++		// If the function succeeds, the return value is nonzero.
++		if (ret) {
++			ruby_packer_cwd[0] = '\0';
++		}
++		return ret;
++	}
++}
++
++DWORD
++RubyPackerGetCurrentDirectoryW(
++	DWORD nBufferLength,
++	LPWSTR lpBuffer
++)
++{
++	if (ruby_packer_cwd[0]) {
++		size_t x;
++		char *ret = ruby_packer_getcwd(NULL, 0);
++		if (NULL == ret) {
++			return 0;
++		}
++		x = mbstowcs(lpBuffer, ret, nBufferLength - 1);
++		free(ret);
++		if (NULL == lpBuffer) {
++			return x + 1;
++		} else {
++			return x;
++		}
++	} else {
++		return GetCurrentDirectoryW(
++			nBufferLength,
++			lpBuffer
++		);
++	}
++}
++#endif // _WIN32
++
++int ruby_packer_stat(const char *path, struct stat *buf)
++{
++	if (ruby_packer_cwd[0] && '/' != *path) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(path);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			ruby_packer_dos_return(squash_stat(ruby_packer_fs, ruby_packer_expanded, buf)),
++			stat(mkdir_workdir_expanded, buf)
++		);
++	} else if (ruby_packer_is_path(path)) {
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			path,
++			ruby_packer_dos_return(squash_stat(ruby_packer_fs, path, buf)),
++			stat(mkdir_workdir_expanded, buf)
++		);
++	} else {
++		return stat(path, buf);
++	}
++}
++
++int ruby_packer_fstat(int fildes, struct stat *buf)
++{
++	if (SQUASH_VALID_VFD(fildes)) {
++		return ruby_packer_dos_return(squash_fstat(fildes, buf));
++	} else {
++		return fstat(fildes, buf);
++	}
++}
++
++int ruby_packer_open(int nargs, const char *pathname, int flags, ...)
++{
++	if (ruby_packer_cwd[0] && '/' != *pathname) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(pathname);
++		if (!(O_CREAT & flags)) {
++			RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++				ruby_packer_expanded,
++				ruby_packer_dos_return(squash_open(ruby_packer_fs, ruby_packer_expanded)),
++				open(mkdir_workdir_expanded, flags)
++			);
++		} else {
++			va_list args;
++			mode_t mode;
++			assert(3 == nargs);
++			va_start(args, flags);
++			mode = va_arg(args, mode_t);
++			va_end(args);
++			char *dir_thereof_ptr = strrchr(ruby_packer_expanded, '/');
++			if (dir_thereof_ptr) {
++				*dir_thereof_ptr = 0;
++				ruby_packer_mkdir(ruby_packer_expanded, 0777);
++				*dir_thereof_ptr = '/';
++			}
++			if (mkdir_workdir) {
++				sqfs_path mkdir_workdir_expanded;
++				char *mkdir_workdir_expanded_head;
++				size_t mkdir_workdir_len;
++				size_t memcpy_len;
++				struct stat mkdir_workdir_buf;
++				mkdir_workdir_len = strlen(mkdir_workdir);
++				memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++				memcpy_len = strlen(ruby_packer_expanded);
++				if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++					memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++				}
++				memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], ruby_packer_expanded, memcpy_len);
++				mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++				mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++				if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++					memmove(
++						mkdir_workdir_expanded_head,
++						mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++						strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++					);
++					return ruby_packer_dos_return(open(mkdir_workdir_expanded, flags, mode));
++				} else {
++					errno = ENOENT;
++					return ruby_packer_dos_return(-1);
++				}
++			} else {
++				errno = ENOENT;
++				return ruby_packer_dos_return(-1);
++			}
++		}
++	} else if (ruby_packer_is_path(pathname)) {
++		if (!(O_CREAT & flags)) {
++			RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++				pathname,
++				ruby_packer_dos_return(squash_open(ruby_packer_fs, pathname)),
++				open(mkdir_workdir_expanded, flags)
++			);
++		} else {
++			va_list args;
++			mode_t mode;
++			assert(3 == nargs);
++			va_start(args, flags);
++			mode = va_arg(args, mode_t);
++			va_end(args);
++			char *dir_thereof_ptr = strrchr(pathname, '/');
++			if (dir_thereof_ptr) {
++				*dir_thereof_ptr = 0;
++				ruby_packer_mkdir(pathname, 0777);
++				*dir_thereof_ptr = '/';
++			}
++			if (mkdir_workdir) {
++				sqfs_path mkdir_workdir_expanded;
++				char *mkdir_workdir_expanded_head;
++				size_t mkdir_workdir_len;
++				size_t memcpy_len;
++				struct stat mkdir_workdir_buf;
++				mkdir_workdir_len = strlen(mkdir_workdir);
++				memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++				memcpy_len = strlen(pathname);
++				if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++					memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++				}
++				memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], pathname, memcpy_len);
++				mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++				mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++				if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++					memmove(
++						mkdir_workdir_expanded_head,
++						mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++						strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++					);
++					return ruby_packer_dos_return(open(mkdir_workdir_expanded, flags, mode));
++				} else {
++					errno = ENOENT;
++					return ruby_packer_dos_return(-1);
++				}
++			} else {
++				errno = ENOENT;
++				return ruby_packer_dos_return(-1);
++			}
++		}
++	} else {
++		if (2 == nargs) {
++			return open(pathname, flags);
++		} else {
++			va_list args;
++			mode_t mode;
++			va_start(args, flags);
++			mode = va_arg(args, mode_t);
++			va_end(args);
++			return open(pathname, flags, mode);
++		}
++	}
++}
++
++int ruby_packer_openat(int nargs, int fd, const char *pathname, int flags, ...)
++{
++	if (fd == AT_FDCWD && ruby_packer_if(pathname)) {
++		return ruby_packer_open(nargs, pathname, flags);
++	}
++
++	return openat(fd, pathname, flags);
++}
++
++int ruby_packer_close(int fildes)
++{
++	if (SQUASH_VALID_VFD(fildes)) {
++		return ruby_packer_dos_return(squash_close(fildes));
++	} else {
++		return close(fildes);
++	}
++}
++
++ssize_t ruby_packer_read(int fildes, void *buf, size_t nbyte)
++{
++	if (SQUASH_VALID_VFD(fildes)) {
++		return ruby_packer_dos_return(squash_read(fildes, buf, nbyte));
++	} else {
++		return read(fildes, buf, nbyte);
++	}
++}
++
++off_t ruby_packer_lseek(int fildes, off_t offset, int whence)
++{
++	if (SQUASH_VALID_VFD(fildes)) {
++		return ruby_packer_dos_return(squash_lseek(fildes, offset, whence));
++	} else {
++		return lseek(fildes, offset, whence);
++	}
++}
++
++short ruby_packer_is_path(char *pathname)
++{
++	if (strnlen((pathname), 21) >= 21) {
++		if (0 == strncmp((pathname), "/__ruby_packer_memfs__", 21)
++#ifdef _WIN32
++			|| 0 == strncmp((pathname), "\\__ruby_packer_memfs__", 21)
++#endif
++			) {
++				return 1;
++			}
++	}
++#ifdef _WIN32
++	if (strnlen((pathname), 23) >= 23) {
++		if (0 == strncmp((pathname) + 1, ":/__ruby_packer_memfs__", 22)
++			|| 0 == strncmp((pathname) + 1, ":\\__ruby_packer_memfs__", 22)
++			) {
++				return 1;
++			}
++	}
++	if (strnlen((pathname), 24) >= 24) {
++		if (0 == strncmp((pathname), "\\\\?\\__ruby_packer_memfs__", 24) ||
++			0 == strncmp((pathname), "//?/__ruby_packer_memfs__", 24)) {
++				return 1;
++			}
++	}
++	if (strnlen((pathname), 27) >= 27) {
++		if (0 == strncmp((pathname), "\\\\?\\", 4) ||
++			0 == strncmp((pathname), "//?/", 4)) {
++			if (0 == strncmp((pathname) + 5, ":\\__ruby_packer_memfs__", 22) ||
++				0 == strncmp((pathname) + 5, ":/__ruby_packer_memfs__", 22)) {
++					return 1;
++				}
++		}
++	}
++#endif
++	return 0;
++}
++
++#ifdef _WIN32
++short ruby_packer_is_path_w(wchar_t *pathname)
++{
++	if (wcsnlen((pathname), 21) >= 21) {
++		if (0 == wcsncmp((pathname), L"/__ruby_packer_memfs__", 21)
++			|| 0 == wcsncmp((pathname), L"\\__ruby_packer_memfs__", 21)
++			) {
++				return 1;
++			}
++	}
++	if (wcsnlen((pathname), 23) >= 23) {
++		if (0 == wcsncmp((pathname) + 1, L":/__ruby_packer_memfs__", 22)
++			|| 0 == wcsncmp((pathname) + 1, L":\\__ruby_packer_memfs__", 22)
++			) {
++				return 1;
++			}
++	}
++	if (wcsnlen((pathname), 24) >= 24) {
++		if (0 == wcsncmp((pathname), L"\\\\?\\__ruby_packer_memfs__", 24) ||
++			0 == wcsncmp((pathname), L"//?/__ruby_packer_memfs__", 24)) {
++				return 1;
++			}
++	}
++	if (wcsnlen((pathname), 27) >= 27) {
++		if (0 == wcsncmp((pathname), L"\\\\?\\", 4) ||
++			0 == wcsncmp((pathname), L"//?/", 4)) {
++			if (0 == wcsncmp((pathname) + 5, L":\\__ruby_packer_memfs__", 22) ||
++				0 == wcsncmp((pathname) + 5, L":/__ruby_packer_memfs__", 22)) {
++					return 1;
++				}
++		}
++	}
++	return 0;
++}
++
++short ruby_packer_is_relative_w(wchar_t *pathname)
++{
++	if (L'\\' == (pathname)[0] ||
++		L'/' == (pathname)[0]) {
++		return 0;
++	}
++	if (wcsnlen(pathname, 3) >= 3) {
++		if (0 == wcsncmp((pathname) + 1, L":\\", 2) ||
++			0 == wcsncmp((pathname) + 1, L":/", 2)) {
++			return 0;
++		}
++	}
++	if (wcsnlen(pathname, 4) >= 4) {
++		if (0 == wcsncmp((pathname), L"\\\\?\\", 4) ||
++			0 == wcsncmp((pathname), L"//?/", 4)) {
++			return 0;
++		}
++	}
++	if (wcsnlen(pathname, 7) >= 7) {
++		if (0 == wcsncmp((pathname), L"\\\\?\\", 4) && 0 == wcsncmp((pathname) + 5, L":\\", 2) ) {
++				return 0;
++			}
++		if (0 == wcsncmp((pathname), L"//?/", 4) && 0 == wcsncmp((pathname) + 5, L":/", 2) ) {
++				return 0;
++			}
++	}
++	return 1;
++}
++#endif
+diff --git a/ruby/ruby_packer_win32.c b/ruby/ruby_packer_win32.c
+new file mode 100644
+index 00000000..e50efb30
+--- /dev/null
++++ b/ruby/ruby_packer_win32.c
+@@ -0,0 +1,1276 @@
++/*
++ * Copyright (c) 2017 Minqi Pan <pmq2001@gmail.com>
++ *                    Shengyuan Liu <sounder.liu@gmail.com>
++ *
++ * This file is part of libsquash, distributed under the MIT License
++ * For full terms see the included LICENSE file
++ */
++
++#include "ruby_packer_common.h"
++
++#ifdef _WIN32
++
++extern char *mkdir_workdir;
++extern char *ruby_packer_mkdir_scope;
++
++int ruby_packer__open(const char *pathname, int flags)
++{
++	if (ruby_packer_cwd[0] && '/' != *pathname) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		RUBY_PACKER_GEN_EXPANDED_NAME(pathname);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			ruby_packer_dos_return(squash_open(ruby_packer_fs, ruby_packer_expanded)),
++			_open(mkdir_workdir_expanded, flags)
++		);
++	} else if (ruby_packer_is_path(pathname)) {
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			pathname,
++			ruby_packer_dos_return(squash_open(ruby_packer_fs, pathname)),
++			_open(mkdir_workdir_expanded, flags)
++		);
++	} else {
++                return _open(pathname, flags);
++	}
++}
++
++int ruby_packer__wopen(const wchar_t *pathname, int flags, int mode)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(pathname)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(pathname);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			ruby_packer_dos_return(squash_open(ruby_packer_fs, ruby_packer_expanded)),
++			_open(mkdir_workdir_expanded, flags, mode)
++		);
++	} else if (ruby_packer_is_path_w(pathname)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(pathname);
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_converted,
++			ruby_packer_dos_return(squash_open(ruby_packer_fs, ruby_packer_converted)),
++			_open(mkdir_workdir_expanded, flags, mode)
++		);
++	} else {
++		return _wopen(pathname, flags, mode);
++	}
++}
++
++int ruby_packer_open_osfhandle(intptr_t osfhandle, int flags)
++{
++	struct squash_file *entry = squash_find_entry((void *)osfhandle);
++	if (entry) {
++		return entry->fd;
++	} else {
++		return _open_osfhandle(osfhandle, flags);
++	}
++}
++
++intptr_t ruby_packer_get_osfhandle(int fd)
++{
++	if (SQUASH_VALID_VFD(fd)) {
++		assert(!(S_ISDIR(squash_global_fdtable.fds[fd]->st.st_mode)));
++		return (intptr_t)(squash_global_fdtable.fds[fd]->payload);
++	}
++	else {
++		return _get_osfhandle(fd);
++	}
++}
++
++int ruby_packer_wchdir(const wchar_t *path)
++{
++	if (ruby_packer_is_path_w(path)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++		struct stat st;
++		int ret;
++
++		W_RUBY_PACKER_PATH_CONVERT(path);
++
++		if (mkdir_workdir) {
++			sqfs_path mkdir_workdir_expanded;
++			char *mkdir_workdir_expanded_head;
++			size_t mkdir_workdir_len;
++			size_t memcpy_len;
++			struct stat mkdir_workdir_buf;
++			mkdir_workdir_len = strlen(mkdir_workdir);
++			memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++			memcpy_len = strlen(ruby_packer_converted);
++			if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++				memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++			}
++			memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], (ruby_packer_converted), memcpy_len);
++			mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++			mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++			if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++				memmove(
++					mkdir_workdir_expanded_head,
++					mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++					strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++				);
++				if (0 == stat(mkdir_workdir_expanded, &mkdir_workdir_buf)) {
++					int ret = _chdir(mkdir_workdir_expanded);
++					if (0 == ret) {
++						ruby_packer_chdir_helper(ruby_packer_converted);
++					}
++					return ret;
++				}
++			}
++		}
++
++		ret = squash_stat(ruby_packer_fs, ruby_packer_converted, &st);
++		if (-1 == ret) {
++			RUBY_PACKER_SET_LAST_ERROR;
++			return -1;
++		}
++		if (S_ISDIR(st.st_mode)) {
++			ruby_packer_chdir_helper(ruby_packer_converted);
++			return 0;
++		} else {
++			errno = ENOENT;
++			RUBY_PACKER_SET_LAST_ERROR;
++			return -1;
++		}
++	} else {
++		int ret = _wchdir(path);
++		if (0 == ret) {
++			ruby_packer_cwd[0] = '\0';
++		}
++		return ret;
++	}
++}
++
++wchar_t *ruby_packer_wgetcwd(wchar_t *buf, size_t size)
++{
++        wchar_t tempbuf[SQUASHFS_PATH_LEN + 1];
++        size_t retlen;
++	if (ruby_packer_cwd[0]) {
++		retlen = mbstowcs(tempbuf, ruby_packer_cwd, SQUASHFS_PATH_LEN);
++		if ((size_t)-1 == retlen) {
++                        errno = ERANGE;
++                        RUBY_PACKER_SET_LAST_ERROR;
++			return NULL;
++		}
++                tempbuf[retlen] = L'\0';
++		if (NULL == buf) {
++			buf = malloc((retlen + 1) * sizeof(wchar_t));
++			if (NULL == buf) {
++				errno = ENOMEM;
++				return NULL;
++			}
++		} else {
++			if (size - 1 < retlen) {
++				retlen = size - 1;
++			}
++		}
++		memcpy(buf, tempbuf, retlen * sizeof(wchar_t));
++		buf[retlen] = L'\0';
++		return buf;
++	} else {
++		return _wgetcwd(buf, size);
++	}
++}
++
++int ruby_packer_fstati64(int fildes, struct _stati64 *buf)
++{
++        struct stat st;
++	if (SQUASH_VALID_VFD(fildes)) {
++		if (NULL == buf) {
++                        errno = EINVAL;
++                        RUBY_PACKER_SET_LAST_ERROR;
++			return -1;
++		}
++		st = SQUASH_VFD_FILE(fildes)->st;
++		buf->st_dev = st.st_dev;
++		buf->st_ino = st.st_ino;
++		buf->st_mode = st.st_mode;
++		buf->st_nlink = st.st_nlink;
++		buf->st_uid = st.st_uid;
++		buf->st_gid = st.st_gid;
++		buf->st_rdev = st.st_rdev;
++		buf->st_size = st.st_size;
++		buf->st_atime = st.st_atime;
++		buf->st_mtime = st.st_mtime;
++		buf->st_ctime = st.st_ctime;
++		return 0;
++	} else {
++		return _fstati64(fildes, buf);
++	}
++}
++
++__int64 ruby_packer_lseeki64(int fildes, __int64 offset, int whence)
++{
++	if (SQUASH_VALID_VFD(fildes)) {
++		return ruby_packer_dos_return(squash_lseek(fildes, offset, whence));
++	} else {
++		return _lseeki64(fildes, offset, whence);
++	}
++}
++
++static HANDLE RubyPackerCreateFileWHelper(
++	char * incoming,
++	DWORD dwFlagsAndAttributes)
++{
++	int ret;
++	struct stat buf;
++	SQUASH_DIR *dirp;
++	int follow_link;
++
++	if (dwFlagsAndAttributes & FILE_FLAG_OPEN_REPARSE_POINT) {
++		ret = squash_lstat(ruby_packer_fs, incoming, &buf);
++		follow_link = 0;
++	} else {
++		ret = squash_stat(ruby_packer_fs, incoming, &buf);
++		follow_link = 1;
++	}
++
++	if (-1 == ret) {
++		RUBY_PACKER_SET_LAST_ERROR;
++		return INVALID_HANDLE_VALUE;
++	}
++	if (S_ISDIR(buf.st_mode)) {
++		dirp = squash_opendir_inner(ruby_packer_fs, incoming, follow_link);
++		if (NULL != dirp) {
++			return (HANDLE)(dirp);
++		} else {
++			RUBY_PACKER_SET_LAST_ERROR;
++			return INVALID_HANDLE_VALUE;
++		}
++	} else {
++		ret = squash_open_inner(ruby_packer_fs, incoming, follow_link);
++		if (ret >= 0) {
++			return (HANDLE)(squash_global_fdtable.fds[ret]->payload);
++		} else {
++			RUBY_PACKER_SET_LAST_ERROR;
++			return INVALID_HANDLE_VALUE;
++		}
++	}
++}
++
++HANDLE
++RubyPackerCreateFileW(
++	LPCWSTR lpFileName,
++	DWORD dwDesiredAccess,
++	DWORD dwShareMode,
++	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
++	DWORD dwCreationDisposition,
++	DWORD dwFlagsAndAttributes,
++	HANDLE hTemplateFile
++)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(lpFileName)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++		if (OPEN_EXISTING == dwCreationDisposition) {
++			RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++				ruby_packer_expanded,
++				RubyPackerCreateFileWHelper(
++					ruby_packer_expanded,
++					dwFlagsAndAttributes
++				),
++				CreateFile(
++					mkdir_workdir_expanded,
++					dwDesiredAccess,
++					dwShareMode,
++					lpSecurityAttributes,
++					dwCreationDisposition,
++					dwFlagsAndAttributes,
++					hTemplateFile
++				)
++			);
++		} else {
++			char *dir_thereof_ptr = strrchr(ruby_packer_expanded, '/');
++			if (dir_thereof_ptr) {
++				*dir_thereof_ptr = 0;
++				ruby_packer_mkdir(ruby_packer_expanded, 0777);
++				*dir_thereof_ptr = '/';
++			}
++			if (mkdir_workdir) {
++				sqfs_path mkdir_workdir_expanded;
++				char *mkdir_workdir_expanded_head;
++				size_t mkdir_workdir_len;
++				size_t memcpy_len;
++				struct stat mkdir_workdir_buf;
++				mkdir_workdir_len = strlen(mkdir_workdir);
++				memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++				memcpy_len = strlen(ruby_packer_expanded);
++				if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++					memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++				}
++				memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], ruby_packer_expanded, memcpy_len);
++				mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++				mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++				if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++					memmove(
++						mkdir_workdir_expanded_head,
++						mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++						strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++					);
++					return CreateFile(
++						mkdir_workdir_expanded,
++						dwDesiredAccess,
++						dwShareMode,
++						lpSecurityAttributes,
++						dwCreationDisposition,
++						dwFlagsAndAttributes,
++						hTemplateFile
++					);
++				} else {
++					errno = ENOENT;
++					return ruby_packer_dos_return(-1);
++				}
++			} else {
++				errno = ENOENT;
++				return ruby_packer_dos_return(-1);
++			}
++		}
++	} else if (ruby_packer_is_path_w(lpFileName)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++
++		if (OPEN_EXISTING == dwCreationDisposition) {
++			RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++				ruby_packer_converted,
++				RubyPackerCreateFileWHelper(
++					ruby_packer_converted,
++					dwFlagsAndAttributes
++				),
++				CreateFile(
++					mkdir_workdir_expanded,
++					dwDesiredAccess,
++					dwShareMode,
++					lpSecurityAttributes,
++					dwCreationDisposition,
++					dwFlagsAndAttributes,
++					hTemplateFile
++				)
++			);
++		} else {
++			char *dir_thereof_ptr = strrchr(ruby_packer_converted, '/');
++			if (dir_thereof_ptr) {
++				*dir_thereof_ptr = 0;
++				ruby_packer_mkdir(ruby_packer_converted, 0777);
++				*dir_thereof_ptr = '/';
++			}
++			if (mkdir_workdir) {
++				sqfs_path mkdir_workdir_expanded;
++				char *mkdir_workdir_expanded_head;
++				size_t mkdir_workdir_len;
++				size_t memcpy_len;
++				struct stat mkdir_workdir_buf;
++				mkdir_workdir_len = strlen(mkdir_workdir);
++				memcpy(mkdir_workdir_expanded, mkdir_workdir, mkdir_workdir_len);
++				memcpy_len = strlen(ruby_packer_converted);
++				if (SQUASHFS_PATH_LEN - mkdir_workdir_len < memcpy_len) {
++					memcpy_len = SQUASHFS_PATH_LEN - mkdir_workdir_len;
++				}
++				memcpy(&mkdir_workdir_expanded[mkdir_workdir_len], ruby_packer_converted, memcpy_len);
++				mkdir_workdir_expanded[mkdir_workdir_len + memcpy_len] = '\0';
++				mkdir_workdir_expanded_head = strstr(mkdir_workdir_expanded, ruby_packer_mkdir_scope);
++				if (mkdir_workdir_expanded_head && '/' == mkdir_workdir_expanded_head[strlen(ruby_packer_mkdir_scope)]) {
++					memmove(
++						mkdir_workdir_expanded_head,
++						mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope),
++						strlen(mkdir_workdir_expanded_head + strlen(ruby_packer_mkdir_scope)) + 1
++					);
++					return CreateFile(
++						mkdir_workdir_expanded,
++						dwDesiredAccess,
++						dwShareMode,
++						lpSecurityAttributes,
++						dwCreationDisposition,
++						dwFlagsAndAttributes,
++						hTemplateFile
++					);
++				} else {
++					errno = ENOENT;
++					return ruby_packer_dos_return(-1);
++				}
++			} else {
++				errno = ENOENT;
++				return ruby_packer_dos_return(-1);
++			}
++		}
++	} else {
++		return CreateFileW(
++			lpFileName,
++			dwDesiredAccess,
++			dwShareMode,
++			lpSecurityAttributes,
++			dwCreationDisposition,
++			dwFlagsAndAttributes,
++			hTemplateFile
++		);
++	}
++}
++
++BOOL
++RubyPackerCloseHandle(
++	HANDLE hObject
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hObject);
++	if (sqf) {
++                int ret;
++		if (S_ISDIR(sqf->st.st_mode)) {
++			ret = squash_closedir((SQUASH_DIR *)hObject);
++                        if (-1 == ret) {
++                                RUBY_PACKER_SET_LAST_ERROR;
++                                return FALSE;
++                        }
++			return TRUE;
++		} else {
++			ret = squash_close(*((int *)hObject));
++                        if (-1 == ret) {
++                                RUBY_PACKER_SET_LAST_ERROR;
++                                return FALSE;
++                        }
++			return TRUE;
++		}
++	} else {
++		return CloseHandle(
++			hObject
++		);
++	}
++}
++
++BOOL
++RubyPackerReadFile(
++	HANDLE       hFile,
++	LPVOID       lpBuffer,
++	DWORD        nNumberOfBytesToRead,
++	LPDWORD      lpNumberOfBytesRead,
++	LPOVERLAPPED lpOverlapped
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hFile);
++        int ret;
++
++	if (sqf) {
++		if (NULL != lpOverlapped) {
++                        squash_lseek(sqf->fd, lpOverlapped->Offset, SQUASH_SEEK_SET);
++                        assert(0 == lpOverlapped->OffsetHigh); // TODO support OffsetHigh
++                }
++		ret = squash_read(sqf->fd, lpBuffer, nNumberOfBytesToRead);
++		if (-1 == ret) {
++			RUBY_PACKER_SET_LAST_ERROR;
++			return FALSE;
++		}
++		*lpNumberOfBytesRead = ret;
++		return TRUE;
++	} else {
++		return ReadFile(
++			hFile,
++			lpBuffer,
++			nNumberOfBytesToRead,
++			lpNumberOfBytesRead,
++			lpOverlapped
++		);
++	}
++}
++
++static DWORD RubyPackerGetFileAttributesHelper(struct stat *st)
++{
++	DWORD fa = 0; //FILE_ATTRIBUTE_READONLY;
++	if (S_ISCHR(st->st_mode)) {
++		fa |= FILE_ATTRIBUTE_DEVICE;
++	} else if (S_ISLNK(st->st_mode)) {
++		fa |= FILE_ATTRIBUTE_REPARSE_POINT;
++	} else if (S_ISDIR(st->st_mode)) {
++		fa |= FILE_ATTRIBUTE_DIRECTORY;
++	} else {
++		fa |= FILE_ATTRIBUTE_NORMAL;
++	}
++	return fa;
++}
++
++DWORD
++RubyPackerGetFileAttributesWHelper(
++	const char *path
++)
++{
++	int ret;
++	struct stat buf;
++	ret = squash_stat(ruby_packer_fs, path, &buf);
++	if (-1 == ret) {
++		RUBY_PACKER_SET_LAST_ERROR;
++		return INVALID_FILE_ATTRIBUTES;
++	}
++	return RubyPackerGetFileAttributesHelper(&buf);
++}
++
++DWORD
++RubyPackerGetFileAttributesW(
++    LPCWSTR lpFileName
++)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(lpFileName)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			RubyPackerGetFileAttributesWHelper(ruby_packer_expanded),
++			GetFileAttributes(
++				mkdir_workdir_expanded
++			)
++		);
++	} else if (ruby_packer_is_path_w(lpFileName)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_converted,
++			RubyPackerGetFileAttributesWHelper(ruby_packer_converted),
++			GetFileAttributes(
++				mkdir_workdir_expanded
++			)
++		);
++	} else {
++		return GetFileAttributesW(
++			lpFileName
++		);
++	}
++}
++
++static void RubyPackerUnixtimeToFiletime(time_t time, FILETIME *ft)
++{
++    ULARGE_INTEGER tmp;
++    tmp.QuadPart = ((long long)time + (long long)((1970-1601)*365.2425) * 24 * 60 * 60) * 10 * 1000 * 1000;
++    ft->dwLowDateTime = tmp.LowPart;
++    ft->dwHighDateTime = tmp.HighPart;
++}
++
++static void RubyPackerFillWin32FileAttributeDataHelper(WIN32_FILE_ATTRIBUTE_DATA *fa, struct stat *st)
++{
++        fa->dwFileAttributes = RubyPackerGetFileAttributesHelper(st);
++        RubyPackerUnixtimeToFiletime(st->st_atime, &fa->ftLastAccessTime);
++        RubyPackerUnixtimeToFiletime(st->st_mtime, &fa->ftLastWriteTime);
++        RubyPackerUnixtimeToFiletime(st->st_ctime, &fa->ftCreationTime);
++        // TODO somehow support large files?
++        fa->nFileSizeHigh = 0;
++        fa->nFileSizeLow = st->st_size;
++}
++
++BOOL
++RubyPackerGetFileAttributesExWHelper(
++	const char *path,
++	LPVOID lpFileInformation
++)
++{
++	int ret;
++	struct stat buf;
++	WIN32_FILE_ATTRIBUTE_DATA *fa;
++
++	ret = squash_stat(ruby_packer_fs, path, &buf);
++	if (-1 == ret) {
++		RUBY_PACKER_SET_LAST_ERROR;
++		return 0;
++	}
++	fa = (WIN32_FILE_ATTRIBUTE_DATA *)lpFileInformation;
++	RubyPackerFillWin32FileAttributeDataHelper(fa, &buf);
++	return 1;
++}
++
++BOOL
++RubyPackerGetFileAttributesExW(
++    LPCWSTR lpFileName,
++    GET_FILEEX_INFO_LEVELS fInfoLevelId,
++    LPVOID lpFileInformation
++)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(lpFileName)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++		assert(GetFileExInfoStandard == fInfoLevelId);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			RubyPackerGetFileAttributesExWHelper(ruby_packer_expanded, lpFileInformation),
++			GetFileAttributesEx(
++				mkdir_workdir_expanded,
++				fInfoLevelId,
++				lpFileInformation
++			),
++		);
++	} else if (ruby_packer_is_path_w(lpFileName)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++		assert(GetFileExInfoStandard == fInfoLevelId);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_converted,
++			RubyPackerGetFileAttributesExWHelper(ruby_packer_converted, lpFileInformation),
++			GetFileAttributesEx(
++				mkdir_workdir_expanded,
++				fInfoLevelId,
++				lpFileInformation
++			)
++		);
++	} else {
++		return GetFileAttributesExW(
++			lpFileName,
++			fInfoLevelId,
++			lpFileInformation
++		);
++	}
++}
++
++BOOL
++RubyPackerGetHandleInformation(
++    HANDLE hObject,
++    LPDWORD lpdwFlags
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hObject);
++        if (sqf) {
++                *lpdwFlags = 0;
++                return 1;
++        } else {
++                return GetHandleInformation(
++                        hObject,
++                        lpdwFlags
++                );
++        }
++}
++
++DWORD
++RubyPackerGetFileType(
++        HANDLE hFile
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hFile);
++        if (sqf) {
++                struct stat st;
++		st = sqf->st;
++                if (S_ISCHR(st.st_mode)) {
++                        return FILE_TYPE_CHAR;
++                } else if (S_ISREG(st.st_mode)) {
++                        return FILE_TYPE_DISK;
++                } else if (S_ISFIFO(st.st_mode)) {
++                        return FILE_TYPE_PIPE;
++                } else {
++                        return FILE_TYPE_UNKNOWN;
++                }
++        } else {
++                return GetFileType(
++                        hFile
++                );
++        }
++}
++
++DWORD RubyPackerDType2FileAttributes(int d_type)
++{
++        DWORD x = 0; //FILE_ATTRIBUTE_READONLY;
++        if (DT_CHR == d_type) {
++                x |= FILE_ATTRIBUTE_DEVICE;
++        } else if (DT_LNK == d_type) {
++                x |= FILE_ATTRIBUTE_REPARSE_POINT;
++        } else if (DT_DIR == d_type) {
++                x |= FILE_ATTRIBUTE_DIRECTORY;
++        } else {
++                x |= FILE_ATTRIBUTE_NORMAL;
++        }
++        return x;
++}
++
++HANDLE
++RubyPackerFindFirstFileHelper(
++        char *incoming,
++        LPWIN32_FIND_DATAW lpFindFileData
++)
++{
++        char *dup_incoming = strdup(incoming);
++        char *parent = incoming + strlen(incoming);
++        SQUASH_DIR *dirp;
++        struct SQUASH_DIRENT *mydirent;
++        char *current_path_tail;
++        char *current_path;
++        size_t mbstowcs_size;
++
++        while (parent >= incoming) {
++                if ('/' == *parent) {
++                        break;
++                }
++                parent -= 1;
++        }
++        *parent = '\0';
++        dirp = squash_opendir(ruby_packer_fs, incoming);
++        if (NULL == dirp) {
++                RUBY_PACKER_SET_LAST_ERROR;
++                return INVALID_HANDLE_VALUE;
++        }
++        dirp->payload = dup_incoming;
++        current_path = (char *)malloc(strlen(dup_incoming) + SQUASHFS_PATH_LEN + 1);
++        if (NULL == current_path) {
++                SetLastError(ERROR_NOT_ENOUGH_MEMORY);
++                return INVALID_HANDLE_VALUE;
++        }
++        memcpy(current_path, incoming, strlen(incoming) + 1);
++        strcat(current_path, "/");
++        current_path_tail = current_path + strlen(current_path);
++        do {
++        	mydirent = squash_readdir(dirp);
++                if (NULL == mydirent) {
++                        break;
++                }
++                memcpy(current_path_tail, mydirent->d_name, strlen(mydirent->d_name) + 1);
++        } while (!PathMatchSpecA(current_path, dup_incoming));
++        free(current_path);
++        if (NULL == mydirent) {
++                int ret = squash_closedir(dirp);
++                assert(0 == ret);
++                RUBY_PACKER_SET_LAST_ERROR;
++                return INVALID_HANDLE_VALUE;
++        }
++        mbstowcs_size = mbstowcs(lpFindFileData->cFileName, mydirent->d_name, sizeof(lpFindFileData->cFileName) / sizeof(lpFindFileData->cFileName[0]) - 1);
++        if ((size_t)-1 == mbstowcs_size) {
++                errno = EIO;
++                RUBY_PACKER_SET_LAST_ERROR;
++                return 0;
++        }
++        lpFindFileData->cFileName[mbstowcs_size] = 0;
++        lpFindFileData->cAlternateFileName[0] = 0;
++        lpFindFileData->dwFileAttributes = RubyPackerDType2FileAttributes(mydirent->d_type);
++        return (HANDLE)(dirp);
++}
++
++HANDLE
++RubyPackerFindFirstFileW(
++        LPCWSTR lpFileName,
++        LPWIN32_FIND_DATAW lpFindFileData
++)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(lpFileName)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			RubyPackerFindFirstFileHelper(ruby_packer_expanded, lpFindFileData),
++			FindFirstFile(
++				mkdir_workdir_expanded,
++				lpFindFileData
++			)
++		);
++	} else if (ruby_packer_is_path_w(lpFileName)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpFileName);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_converted,
++			RubyPackerFindFirstFileHelper(ruby_packer_converted, lpFindFileData),
++			FindFirstFile(
++				mkdir_workdir_expanded,
++				lpFindFileData
++			)
++		);
++	} else {
++		return FindFirstFileW(
++			lpFileName,
++			lpFindFileData
++		);
++	}
++}
++
++BOOL
++RubyPackerFindNextFileW(
++        HANDLE hFindFile,
++        LPWIN32_FIND_DATAW lpFindFileData
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hFindFile);
++
++	if (sqf) {
++                SQUASH_DIR *dirp;
++                struct SQUASH_DIRENT *mydirent;
++                char *current_path;
++                char *current_path_tail;
++                size_t mbstowcs_size;
++
++                dirp = (SQUASH_DIR*)hFindFile;
++                current_path = (char *)malloc(strlen((char *)(dirp->payload)) + SQUASHFS_PATH_LEN + 1);
++                if (NULL == current_path) {
++                        errno = ENOMEM;
++                        RUBY_PACKER_SET_LAST_ERROR;
++                        return 0;
++                }
++                memcpy(current_path, dirp->filename, strlen(dirp->filename) + 1);
++                strcat(current_path, "/");
++                current_path_tail = current_path + strlen(current_path);
++                do {
++                        mydirent = squash_readdir(dirp);
++                        if (NULL == mydirent) {
++                                break;
++                        }
++                        memcpy(current_path_tail, mydirent->d_name, strlen(mydirent->d_name) + 1);
++                } while (!PathMatchSpecA(current_path, (char *)(dirp->payload)));
++                free(current_path);
++                if (NULL == mydirent) {
++                        errno = ENOENT;
++                        SetLastError(ERROR_NO_MORE_FILES);
++                        _doserrno = ERROR_NO_MORE_FILES;
++                        return 0;
++                }
++                mbstowcs_size = mbstowcs(lpFindFileData->cFileName, mydirent->d_name, sizeof(lpFindFileData->cFileName) / sizeof(lpFindFileData->cFileName[0]) - 1);
++                if ((size_t)-1 == mbstowcs_size) {
++                        errno = EIO;
++                        RUBY_PACKER_SET_LAST_ERROR;
++                        return 0;
++                }
++                lpFindFileData->cFileName[mbstowcs_size] = 0;
++                lpFindFileData->cAlternateFileName[0] = 0;
++                lpFindFileData->dwFileAttributes = RubyPackerDType2FileAttributes(mydirent->d_type);
++                return 1;
++        } else {
++                return FindNextFileW(
++                        hFindFile,
++                        lpFindFileData
++                );
++        }
++}
++
++BOOL
++RubyPackerFindClose(
++        HANDLE hFindFile
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hFindFile);
++        int ret;
++
++	if (sqf) {
++                ret = squash_closedir((SQUASH_DIR *)hFindFile);
++                if (0 == ret) {
++                        return 1;
++                } else {
++                        RUBY_PACKER_SET_LAST_ERROR;
++                        return 0;
++                }
++        } else {
++                return FindClose(
++                        hFindFile
++                );
++        }
++}
++
++BOOL
++RubyPackerDeviceIoControl(
++        HANDLE hDevice,
++        DWORD dwIoControlCode,
++        LPVOID lpInBuffer,
++        DWORD nInBufferSize,
++        LPVOID lpOutBuffer,
++        DWORD nOutBufferSize,
++        LPDWORD lpBytesReturned,
++        LPOVERLAPPED lpOverlapped
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hDevice);
++	int ret;
++
++	if (sqf) {
++		char the_path[SQUASHFS_PATH_LEN + 1];
++		wchar_t the_wpath[SQUASHFS_PATH_LEN + 1];
++		struct stat st;
++		size_t retlen;
++		REPARSE_DATA_BUFFER* reparse_data = (REPARSE_DATA_BUFFER*)lpOutBuffer;
++
++		// TODO handle the overlapped
++		assert(NULL == lpOverlapped);
++
++		// TODO support more than FSCTL_GET_REPARSE_POINT
++		assert(0 == nInBufferSize);
++
++		// FSCTL_GET_REPARSE_POINT
++		// https://msdn.microsoft.com/en-us/library/windows/desktop/aa364571(v=vs.85).aspx
++		assert(dwIoControlCode == FSCTL_GET_REPARSE_POINT);
++		assert(NULL == lpInBuffer);
++		st = sqf->st;
++		if (!S_ISLNK(st.st_mode)) {
++			errno = EINVAL;
++			SetLastError(ERROR_NOT_A_REPARSE_POINT);
++			_doserrno = ERROR_NOT_A_REPARSE_POINT;
++			return FALSE;
++		}
++		ret = squash_readlink_inode(
++			ruby_packer_fs,
++			&sqf->node,
++			the_path,
++			SQUASHFS_PATH_LEN
++		);
++		if (-1 == ret) {
++			RUBY_PACKER_SET_LAST_ERROR;
++			return FALSE;
++		}
++
++		retlen = mbstowcs(the_wpath, the_path, SQUASHFS_PATH_LEN);
++		if ((size_t)-1 == retlen) {
++			errno = ENAMETOOLONG;
++			RUBY_PACKER_SET_LAST_ERROR;
++			return FALSE;
++		}
++		the_wpath[retlen] = L'\0';
++		*lpBytesReturned = sizeof(REPARSE_DATA_BUFFER) + retlen * sizeof(wchar_t);
++		if (*lpBytesReturned > nOutBufferSize) {
++			*lpBytesReturned = 0;
++			errno = ENAMETOOLONG;
++			RUBY_PACKER_SET_LAST_ERROR;
++			return FALSE;
++		}
++		reparse_data->ReparseTag = IO_REPARSE_TAG_SYMLINK;
++		memcpy(reparse_data->SymbolicLinkReparseBuffer.PathBuffer, the_wpath, (retlen + 1) * sizeof(wchar_t));
++		reparse_data->SymbolicLinkReparseBuffer.SubstituteNameLength = retlen * sizeof(wchar_t);
++		reparse_data->SymbolicLinkReparseBuffer.SubstituteNameOffset = 0;
++		return TRUE;
++	} else {
++		return DeviceIoControl(
++			hDevice,
++			dwIoControlCode,
++			lpInBuffer,
++			nInBufferSize,
++			lpOutBuffer,
++			nOutBufferSize,
++			lpBytesReturned,
++			lpOverlapped
++		);
++	}
++}
++
++HANDLE
++RubyPackerCreateIoCompletionPort(
++        HANDLE FileHandle,
++        HANDLE ExistingCompletionPort,
++        ULONG_PTR CompletionKey,
++        DWORD NumberOfConcurrentThreads
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)FileHandle);
++
++	if (sqf) {
++		// do nothing
++		assert(NULL != ExistingCompletionPort);
++		return ExistingCompletionPort;
++	} else {
++		return CreateIoCompletionPort(
++			FileHandle,
++			ExistingCompletionPort,
++			CompletionKey,
++			NumberOfConcurrentThreads
++		);
++	}
++}
++
++BOOL
++RubyPackerReadDirectoryChangesW(
++        HANDLE hDirectory,
++        LPVOID lpBuffer,
++        DWORD nBufferLength,
++        BOOL bWatchSubtree,
++        DWORD dwNotifyFilter,
++        LPDWORD lpBytesReturned,
++        LPOVERLAPPED lpOverlapped,
++        LPOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
++)
++{
++	struct squash_file *sqf = squash_find_entry((void *)hDirectory);
++
++	if (sqf) {
++		// do nothing
++		assert(lpOverlapped);
++		return TRUE;
++	} else {
++		return ReadDirectoryChangesW(
++			hDirectory,
++			lpBuffer,
++			nBufferLength,
++			bWatchSubtree,
++			dwNotifyFilter,
++			lpBytesReturned,
++			lpOverlapped,
++			lpCompletionRoutine
++		);
++	}
++}
++
++HMODULE
++RubyPackerLoadLibraryExW(
++	LPCWSTR lpLibFileName,
++	HANDLE hFile,
++	DWORD dwFlags
++)
++{
++	if (ruby_packer_cwd[0] && ruby_packer_is_relative_w(lpLibFileName)) {
++		sqfs_path ruby_packer_expanded;
++		size_t ruby_packer_cwd_len;
++		size_t memcpy_len;
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpLibFileName);
++		RUBY_PACKER_GEN_EXPANDED_NAME(ruby_packer_converted);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_expanded,
++			LoadLibraryExW(
++				squash_extract(ruby_packer_fs, ruby_packer_expanded, "dll"),
++				hFile,
++				dwFlags
++			),
++			LoadLibraryEx(
++				mkdir_workdir_expanded,
++				hFile,
++				dwFlags
++			)
++		);
++	}
++	else if (ruby_packer_is_path_w(lpLibFileName)) {
++		sqfs_path ruby_packer_converted_storage;
++		char *ruby_packer_converted;
++		char *ruby_packer_i;
++		size_t ruby_packer_converted_length;
++
++		W_RUBY_PACKER_PATH_CONVERT(lpLibFileName);
++
++		RUBY_PACKER_CONSIDER_MKDIR_WORKDIR_RETURN(
++			ruby_packer_converted,
++			LoadLibraryExW(
++				squash_extract(ruby_packer_fs, ruby_packer_converted, "dll"),
++				hFile,
++				dwFlags
++			),
++			LoadLibraryEx(
++				mkdir_workdir_expanded,
++				hFile,
++				dwFlags
++			)
++		);
++	}
++	else {
++		return LoadLibraryExW(
++			lpLibFileName,
++			hFile,
++			dwFlags
++		);
++	}
++}
++
++BOOL
++RubyPackerCreateProcessW(
++	LPCWSTR lpApplicationName,
++	LPWSTR lpCommandLine,
++	LPSECURITY_ATTRIBUTES lpProcessAttributes,
++	LPSECURITY_ATTRIBUTES lpThreadAttributes,
++	BOOL bInheritHandles,
++	DWORD dwCreationFlags,
++	LPVOID lpEnvironment,
++	LPCWSTR lpCurrentDirectory,
++	LPSTARTUPINFOW lpStartupInfo,
++	LPPROCESS_INFORMATION lpProcessInformation
++)
++{
++	if (NULL != lpCurrentDirectory && ruby_packer_is_path_w(lpCurrentDirectory)) {
++		lpCurrentDirectory = NULL;
++	}
++	return CreateProcessW(
++		lpApplicationName,
++		lpCommandLine,
++		lpProcessAttributes,
++		lpThreadAttributes,
++		bInheritHandles,
++		dwCreationFlags,
++		lpEnvironment,
++		lpCurrentDirectory,
++		lpStartupInfo,
++		lpProcessInformation
++	);
++}
++
++#ifndef RUBY_EXPORT
++NTSTATUS
++RubyPackerpNtQueryInformationFile(
++	HANDLE FileHandle,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FileInformation,
++	ULONG Length,
++	FILE_INFORMATION_CLASS FileInformationClass)
++{
++	struct squash_file *sqf = squash_find_entry((void *)FileHandle);
++        struct stat st;
++	if (sqf) {
++		st = sqf->st;
++		IoStatusBlock->Status = STATUS_NOT_IMPLEMENTED;
++		FILE_ALL_INFORMATION *file_info = (FILE_ALL_INFORMATION *)FileInformation;
++		file_info->BasicInformation.FileAttributes = RubyPackerGetFileAttributesHelper(&st);
++		file_info->StandardInformation.EndOfFile.QuadPart = st.st_size;
++
++		file_info->BasicInformation.LastAccessTime.QuadPart = st.st_atime * 10000000ULL + 116444736000000000ULL;
++		file_info->BasicInformation.ChangeTime.QuadPart = st.st_mtime * 10000000ULL + 116444736000000000ULL;
++		file_info->BasicInformation.LastWriteTime.QuadPart = st.st_mtime * 10000000ULL + 116444736000000000ULL;
++		file_info->BasicInformation.CreationTime.QuadPart = st.st_ctime * 10000000ULL + 116444736000000000ULL;
++		file_info->InternalInformation.IndexNumber.QuadPart = st.st_ino;
++		file_info->StandardInformation.AllocationSize.QuadPart = st.st_size;
++		file_info->StandardInformation.NumberOfLinks = st.st_nlink;
++
++		return STATUS_SUCCESS;
++	} else {
++		return pNtQueryInformationFile(
++			FileHandle,
++			IoStatusBlock,
++			FileInformation,
++			Length,
++			FileInformationClass
++		);
++	}
++}
++
++NTSTATUS
++RubyPackerpNtQueryVolumeInformationFile(
++	HANDLE FileHandle,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FsInformation,
++	ULONG Length,
++	FS_INFORMATION_CLASS FsInformationClass)
++{
++	if (squash_find_entry((void *)FileHandle)) {
++		IoStatusBlock->Status = STATUS_NOT_IMPLEMENTED;
++		return STATUS_SUCCESS;
++	} else {
++		return pNtQueryVolumeInformationFile(
++			FileHandle,
++			IoStatusBlock,
++			FsInformation,
++			Length,
++			FsInformationClass);
++	}
++}
++
++NTSTATUS
++RubyPackerpNtQueryDirectoryFile(
++	HANDLE FileHandle,
++	HANDLE Event,
++	PIO_APC_ROUTINE ApcRoutine,
++	PVOID ApcContext,
++	PIO_STATUS_BLOCK IoStatusBlock,
++	PVOID FileInformation,
++	ULONG Length,
++	FILE_INFORMATION_CLASS FileInformationClass,
++	BOOLEAN ReturnSingleEntry,
++	PUNICODE_STRING FileName,
++	BOOLEAN RestartScan
++)
++{
++        SQUASH_DIR *handle;
++        struct SQUASH_DIRENT *mydirent;
++        size_t retlen;
++
++	if (squash_find_entry((void *)FileHandle)) {
++		handle = (SQUASH_DIR *)FileHandle;
++		mydirent = squash_readdir(handle);
++		if (NULL == mydirent) {
++			return STATUS_NO_MORE_FILES;
++		} else {
++                        /* FileInformation points to a buffer to hold directory entries.
++                         * It's important that this buffer can hold at least one entry, regardless
++                         * of the length of the file names present in the enumerated directory.
++                         * A file name is at most 256 WCHARs long.
++                         * According to MSDN, the buffer must be aligned at an 8-byte boundary.
++                         */
++                        assert(Length > 256 * sizeof(wchar_t));
++			FILE_DIRECTORY_INFORMATION *ret = (FILE_DIRECTORY_INFORMATION *)FileInformation;
++			ret->NextEntryOffset = 0;
++			retlen = mbstowcs(ret->FileName, mydirent->d_name, 255);
++			if ((size_t)-1 == retlen) {
++				return -1;
++                        }
++                        ret->FileName[retlen] = 0;
++                        ret->FileNameLength = sizeof(ret->FileName[0]) * retlen;
++			ret->FileAttributes = RubyPackerDType2FileAttributes(mydirent->d_type);
++                        IoStatusBlock->Information = (char*)(&ret->FileName[retlen]) - (char*)FileInformation + 1;
++			return STATUS_SUCCESS;
++		}
++	} else {
++		return pNtQueryDirectoryFile(
++			FileHandle,
++			Event,
++			ApcRoutine,
++			ApcContext,
++			IoStatusBlock,
++			FileInformation,
++			Length,
++			FileInformationClass,
++			ReturnSingleEntry,
++			FileName,
++			RestartScan
++		);
++	}
++}
++
++#endif // !RUBY_EXPORT
++#endif
+--
+2.24.3 (Apple Git-128)
+

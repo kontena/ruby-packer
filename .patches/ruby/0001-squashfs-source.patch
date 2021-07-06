@@ -1,4 +1,4 @@
-From 557c3e95a705dcc573becf4fb76dbc6e2cb47dac Mon Sep 17 00:00:00 2001
+From 581787fa97b85b4b0f0be4692cebe5404a48f557 Mon Sep 17 00:00:00 2001
 From: Alexey Morozov <alexey.morozov.is@gmail.com>
 Date: Wed, 26 May 2021 18:44:59 +0300
 Subject: [PATCH 1/7] squashfs source
@@ -86,7 +86,7 @@ Subject: [PATCH 1/7] squashfs source
  create mode 100644 ruby/squash_util.c
 
 diff --git a/ruby/common.mk b/ruby/common.mk
-index 4bcd0037..0608fa72 100644
+index c5947ff7..79b0fd51 100644
 --- a/ruby/common.mk
 +++ b/ruby/common.mk
 @@ -74,7 +74,27 @@ ENC_MK        = enc.mk
